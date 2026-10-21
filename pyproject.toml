@@ -1,0 +1,56 @@
+[build-system]
+# 77 is the first that reads license = "Apache-2.0" as text. 76 refuses it.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lib-installer"
+# Read from lib_installer.__version__, so the version lives in exactly one
+# place and cannot drift between the package and its metadata.
+dynamic = ["version"]
+description = "Install embedded C libraries into STM32, Zephyr, ESP-IDF, Arduino and PlatformIO projects"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Nima Askari (NimaLTD)", email = "nima.askari@gmail.com" }]
+keywords = [
+    "embedded", "installer", "stm32", "cubemx", "zephyr", "esp-idf", "esp32", "arduino",
+    "platformio", "library", "nimaltd",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Embedded Systems",
+]
+
+# None. PyYAML is used when it happens to be installed, and a reader built
+# into the package handles installer.yml otherwise. Requiring it would make
+# pip go online for it, which is exactly what an offline install cannot do.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/nimaltd/lib-installer"
+Issues = "https://github.com/nimaltd/lib-installer/issues"
+
+[project.scripts]
+lib-installer = "lib_installer.cli:main"
+
+# The package is the src folder itself, with no folder of its name inside.
+[tool.setuptools]
+package-dir = { "lib_installer" = "src" }
+packages = [
+    "lib_installer",
+    "lib_installer.core",
+    "lib_installer.stm32",
+    "lib_installer.stm32.ide",
+    "lib_installer.zephyr",
+    "lib_installer.esp32",
+    "lib_installer.arduino",
+    "lib_installer.pio",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "lib_installer.__version__" }

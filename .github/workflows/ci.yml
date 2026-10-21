@@ -1,0 +1,392 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests on Python ${{ matrix.python }}, ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.8", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip pytest PyYAML
+
+      # Windows is in the matrix on purpose: its CRLF files and its paths are
+      # what break first in a project's own files.
+      - name: Test
+        run: python test/run_tests.py
+
+  build:
+    name: Build the distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+
+      - name: Check
+        run: python -m twine check dist/*
+
+      # What was built, installed the way a user gets it and then started, from
+      # outside the checkout so the source tree cannot stand in for it.
+      # --no-index because it has to need nothing else.
+      - name: Run what was built
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
+          python -m venv fresh
+          fresh/bin/python -m pip install --no-index "$wheel"
+          expected="lib-installer $(basename "$wheel" | cut -d- -f2)"
+          for got in "$(fresh/bin/lib-installer --version)" "$(fresh/bin/python -m lib_installer --version)"; do
+            echo "$got"
+            test "$got" = "$expected"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  zephyr:
+    name: A real Zephyr build, moved over from zephyr-installer, run on native_sim
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      ZP: ${{ github.workspace }}/../zp
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # native_sim is built with the runner's own gcc and runs on the runner,
+      # so this needs no Zephyr SDK and none of Zephyr's modules.
+      - name: Zephyr's tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build device-tree-compiler gperf
+          python -m pip install west
+
+      - name: Zephyr, without its modules
+        run: |
+          git clone --depth 1 --branch v4.3.0 https://github.com/zephyrproject-rtos/zephyr.git "$ZP/zephyr"
+          cd "$ZP"
+          west init -l zephyr
+          west config manifest.project-filter -- '-.*'
+          python -m pip install -r zephyr/scripts/requirements-base.txt
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # First the way a project was made before 3.0.0: zephyr-installer 2.1.0,
+      # from PyPI, with nobody to answer.
+      - name: Install the demo with zephyr-installer 2.1.0
+        run: |
+          python -m pip install zephyr-installer==2.1.0
+          cp -r test/zephyr/e2e/app "$ZP/app"
+          cd "$ZP/app"
+          zephyr-installer "$GITHUB_WORKSPACE/test/zephyr/e2e/demo" "$GITHUB_WORKSPACE/test/zephyr/e2e/extra" < /dev/null
+          test -f .zephyr-installer.json
+
+      # Then the wheel just built, over it. extra names its platform, so no
+      # --platform is needed though demo names none. The project moves over:
+      # one record, and every block once, under lib-installer's markers.
+      - name: Install it again with lib-installer
+        run: |
+          python -m pip install --no-index dist/*.whl
+          cd "$ZP/app"
+          lib-installer "$GITHUB_WORKSPACE/test/zephyr/e2e/demo" "$GITHUB_WORKSPACE/test/zephyr/e2e/extra" < /dev/null
+          cat CMakeLists.txt prj.conf sysbuild.conf VERSION extra.conf .lib-installer.json
+          cat modules/demo/zephyr/CMakeLists.txt modules/demo/zephyr/Kconfig modules/extra/zephyr/CMakeLists.txt
+          test ! -e .zephyr-installer.json
+          grep -q '"platform": "zephyr"' .lib-installer.json
+          if grep -q "zephyr-installer" CMakeLists.txt prj.conf sysbuild.conf modules/*/zephyr/*; then exit 1; fi
+          test "$(grep -c '>>> lib-installer: demo >>>' CMakeLists.txt)" = 1
+          test "$(grep -c '>>> lib-installer: demo >>>' prj.conf)" = 1
+
+      # 52 is the library's answer with the value prj.conf sets, 50, not its
+      # default of 40, so this also shows the user's setting won.
+      - name: Build it and run it
+        working-directory: ${{ env.ZP }}
+        # Said outright: Zephyr looks for its SDK before it sees the board is
+        # native_sim, and there is no SDK here to find.
+        env:
+          ZEPHYR_TOOLCHAIN_VARIANT: host
+        run: |
+          west build -b native_sim/native/64 -d build app
+          build/zephyr/zephyr.exe --stop_at=1 | tee run.txt
+          grep -q "demo says 52" run.txt
+          grep -q "extra says 7, version 3.1.4" run.txt
+
+      # Out again, the platform from the record: every block of extra's goes,
+      # in CMakeLists.txt, prj.conf and sysbuild.conf, and the files it made
+      # once stay, the user's now.
+      - name: Take extra out
+        working-directory: ${{ env.ZP }}/app
+        run: |
+          lib-installer --uninstall extra < /dev/null
+          if grep -q "lib-installer: extra" CMakeLists.txt prj.conf sysbuild.conf; then exit 1; fi
+          test -f VERSION
+          test -f extra.conf
+          test ! -e modules/extra/src/extra.c
+
+  esp-idf:
+    name: A real ESP-IDF build, run on the linux target
+    needs: build
+    runs-on: ubuntu-latest
+    # Espressif's own image, with ESP-IDF and its tools in /opt/esp. Its entry
+    # point sets the environment up, which a step does not run through, so
+    # each step sources export.sh itself.
+    container: espressif/idf:v6.0.1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # The wheel just built, into the test project, the way a user does it:
+      # from the project's folder, with nobody to answer. places names its
+      # platform, so no --platform is needed though the others name none.
+      # extra brings what 2.0.0 adds: files made once and groups of CMake
+      # lines. places brings what 2.1.0 adds: every file keeping its path, an
+      # extra with a root, a once file named by its path alone, and CMake lines
+      # under their place, with {library} in them.
+      - name: Install the demo libraries
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          python -m pip install --no-index dist/*.whl
+          cp -r test/esp32/e2e/app "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          e2e="$GITHUB_WORKSPACE/test/esp32/e2e"
+          lib-installer "$e2e/demo" "$e2e/extra" "$e2e/places" < /dev/null
+          cat CMakeLists.txt main/CMakeLists.txt sdkconfig.defaults version.txt extra.defaults
+          cat components/demo/CMakeLists.txt components/demo/Kconfig components/extra/CMakeLists.txt
+          cat components/places/CMakeLists.txt components/places/Kconfig
+          grep -q '"platform": "esp32"' .lib-installer.json
+          test -f components/places/src/places.h
+          test -f components/places/private/places_private.h
+          test -f config/places.cfg
+          test -f tools/places.txt
+
+      # 52 is the library's answer with the value sdkconfig.defaults sets, 50,
+      # not its default of 40, so this also shows the user's setting won. 7 is
+      # extra's with the 5 from extra.defaults, and 3.1.4 is from version.txt.
+      # 11 is places' with the 9 from places.defaults, read through {library}.
+      # The linux target builds for the runner itself, so the program runs here.
+      - name: Build it for linux and run it
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py --preview set-target linux
+          idf.py build
+          grep -q "CONFIG_FREERTOS_HZ=1000" sdkconfig
+          timeout 60 ./build/app.elf | tee run.txt
+          grep -q "demo says 52" run.txt
+          grep -q "extra says 7, version 3.1.4" run.txt
+          grep -q "places says 11" run.txt
+
+      # The same project for a real chip, which is what users build.
+      - name: Build it for esp32
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          rm -rf build sdkconfig
+          idf.py set-target esp32
+          idf.py build
+
+      # Out again: every block of extra's goes, in both CMakeLists.txt files,
+      # and the files it made once stay, the project's own now.
+      - name: Take extra out
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          lib-installer --uninstall extra < /dev/null
+          if grep -q "lib-installer: extra" CMakeLists.txt main/CMakeLists.txt; then exit 1; fi
+          if grep -qw "extra" main/CMakeLists.txt; then exit 1; fi
+          test ! -e components/extra
+          test -f version.txt
+          test -f extra.defaults
+
+      # And places: its blocks go, its tools/ with them, and its once file stays.
+      - name: Take places out
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          lib-installer --uninstall places < /dev/null
+          if grep -q "lib-installer: places" CMakeLists.txt main/CMakeLists.txt; then exit 1; fi
+          if grep -qw "places" main/CMakeLists.txt; then exit 1; fi
+          test ! -e components/places
+          test ! -e tools
+          test -f config/places.cfg
+
+  arduino:
+    name: A real Arduino build, moved over from arduino-installer, and into a sketch
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # arduino-cli from Arduino's own release, and the AVR core, so the
+      # sketches build for an Uno. The sketchbook is one of this run's own,
+      # which arduino-cli and the installer both find through
+      # ARDUINO_DIRECTORIES_USER.
+      - name: arduino-cli and the AVR core
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/cli.tar.gz" \
+            https://github.com/arduino/arduino-cli/releases/download/v1.5.1/arduino-cli_1.5.1_Linux_64bit.tar.gz
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/cli.tar.gz" -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "ARDUINO_DIRECTORIES_USER=$RUNNER_TEMP/Arduino" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/bin/arduino-cli" core update-index
+          "$RUNNER_TEMP/bin/arduino-cli" core install arduino:avr
+
+      # Into the libraries folder first the way it was done before 3.0.0, with
+      # arduino-installer 2.1.0 from PyPI, then again with the wheel just
+      # built, which moves the libraries folder's record over. Neither library
+      # names a platform, so --platform says it. Then into the other sketch's
+      # src folder, which changes its setting and installs again, which has to
+      # keep it. helper, which demo needs, goes into the libraries folder.
+      - name: Install the demo both ways
+        run: |
+          python -m pip install arduino-installer==2.1.0
+          mkdir -p "$ARDUINO_DIRECTORIES_USER"
+          cp -r test/arduino/e2e/sketches/. "$ARDUINO_DIRECTORIES_USER/"
+          demo="$GITHUB_WORKSPACE/test/arduino/e2e/demo"
+          helper="$GITHUB_WORKSPACE/test/arduino/e2e/helper"
+          cd "$ARDUINO_DIRECTORIES_USER/everywhere"
+          arduino-installer "$demo" "$helper" --into libraries < /dev/null
+          test -f ../libraries/.arduino-installer.json
+          python -m pip install --no-index "$GITHUB_WORKSPACE"/dist/*.whl
+          lib-installer "$demo" "$helper" --platform arduino --into libraries < /dev/null
+          test ! -e ../libraries/.arduino-installer.json
+          grep -q '"platform": "arduino"' ../libraries/.lib-installer.json
+          if grep -q "arduino-installer" ../libraries/*/library.properties; then exit 1; fi
+          cd "$ARDUINO_DIRECTORIES_USER/here"
+          lib-installer "$demo" "$helper" --platform arduino --into sketch < /dev/null
+          sed -i 's/#define DEMO_PLUS                   2/#define DEMO_PLUS                   12/' src/demo/src/demo_config.h
+          lib-installer "$demo" "$helper" --platform arduino --into sketch < /dev/null
+          cat ../libraries/demo/library.properties src/demo/src/demo_config.h
+
+      # Each sketch checks its own DEMO_PLUS with a static_assert, so a build
+      # also shows the update kept the sketch's setting.
+      - name: Build both sketches
+        run: |
+          arduino-cli compile -b arduino:avr:uno "$ARDUINO_DIRECTORIES_USER/everywhere"
+          arduino-cli compile -b arduino:avr:uno "$ARDUINO_DIRECTORIES_USER/here"
+
+      # Out of the sketch again, the platform from the sketch's record: its
+      # files go, the setting changed is saved beside them, and helper stays
+      # for the other sketch, which still builds.
+      - name: Take demo out of the sketch
+        run: |
+          cd "$ARDUINO_DIRECTORIES_USER/here"
+          lib-installer --uninstall demo < /dev/null
+          test ! -e src/demo/src/demo.c
+          ls src/demo/src/demo_config.h.*.bak
+          test -e ../libraries/helper/src/helper.h
+          arduino-cli compile -b arduino:avr:uno "$ARDUINO_DIRECTORIES_USER/everywhere"
+
+  platformio:
+    name: A real PlatformIO build, in two environments, then taken out again
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # PlatformIO Core from PyPI, at the version the tests were made with. The
+      # native platform builds with the runner's own gcc, so no board is needed.
+      - name: PlatformIO
+        run: python -m pip install platformio==6.2.0
+
+      # The wheel just built, the way a user runs it, with nobody to answer:
+      # demo and helper into lib/. helper is for Arduino and PlatformIO, and
+      # with nobody to ask which, the first run needs --platform. The project
+      # then changes demo's setting and installs again, which has to keep it,
+      # and its record says the platform.
+      - name: Install the demo
+        run: |
+          python -m pip install --no-index dist/*.whl
+          cp -r test/pio/e2e/app "$RUNNER_TEMP/app"
+          cp test/pio/e2e/app/platformio.ini "$RUNNER_TEMP/before.ini"
+          demo="$GITHUB_WORKSPACE/test/pio/e2e/demo"
+          helper="$GITHUB_WORKSPACE/test/pio/e2e/helper"
+          cd "$RUNNER_TEMP/app"
+          if lib-installer "$demo" "$helper" < /dev/null; then exit 1; fi
+          lib-installer "$demo" "$helper" --platform pio < /dev/null
+          sed -i 's/#define DEMO_PLUS                   2/#define DEMO_PLUS                   12/' lib/demo/src/demo_config.h
+          lib-installer "$demo" "$helper" < /dev/null
+          cat platformio.ini lib/demo/library.json lib/demo/src/demo_config.h
+
+      # demo.h stops the build if DEMO_ON did not reach the project's own code,
+      # so a build of both environments shows the defines got to each of them.
+      # 52 is helper's 40 and the 12 the update had to keep.
+      - name: Build and run both environments
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          pio run
+          for env in native plain; do
+            got="$(.pio/build/$env/program)"
+            echo "$env: $got"
+            test "$got" = "demo says 52"
+          done
+
+      # Out again: its files and its library.json go, the setting changed is
+      # saved beside them, and platformio.ini is back to the byte it was.
+      - name: Take demo out
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          lib-installer --uninstall demo < /dev/null
+          test ! -e lib/demo/src/demo.c
+          test ! -e lib/demo/library.json
+          ls lib/demo/src/demo_config.h.*.bak
+          test -e lib/helper/library.json
+          cmp platformio.ini "$RUNNER_TEMP/before.ini"
