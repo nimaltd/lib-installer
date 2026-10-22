@@ -38,11 +38,11 @@ The library's `installer.yml` says which platform it is for, so that is all it t
 
 | Platform | Run it from | Try it with |
 |---|---|---|
-| STM32 | the project's root, the folder CubeMX made | `lib-installer nimaltd/lib-installer-stm32` |
-| Zephyr | the application's folder, the one holding `prj.conf` | `lib-installer nimaltd/lib-installer-zephyr` |
-| ESP-IDF | the project's folder, the one holding `main/` | `lib-installer nimaltd/lib-installer-esp32` |
-| Arduino | anywhere, or a sketch's folder | `lib-installer nimaltd/lib-installer-arduino` |
-| PlatformIO | the project's folder, the one holding `platformio.ini` | `lib-installer nimaltd/lib-installer-pio` |
+| STM32 | the project's root, the folder CubeMX made | `lib-installer nimaltd/lib-installer-example-stm32` |
+| Zephyr | the application's folder, the one holding `prj.conf` | `lib-installer nimaltd/lib-installer-example-zephyr` |
+| ESP-IDF | the project's folder, the one holding `main/` | `lib-installer nimaltd/lib-installer-example-esp32` |
+| Arduino | anywhere, or a sketch's folder | `lib-installer nimaltd/lib-installer-example-arduino` |
+| PlatformIO | the project's folder, the one holding `platformio.ini` | `lib-installer nimaltd/lib-installer-example-pio` |
 
 Then build as you always do. Any other library goes in the same way, as `lib-installer owner/example`.
 
@@ -57,7 +57,7 @@ When a newer lib-installer is out, the last line of a run says so, with the comm
 A library can need a newer installer than the one you have. It then says so and changes nothing:
 
 ```
-Error: This library needs lib-installer 3.1.0 or newer, and this one is 3.0.0. Nothing was changed.
+Error: This library needs lib-installer 3.1.0 or newer, and this one is 3.0.1. Nothing was changed.
 Update it with:
     pip install --upgrade lib-installer
 ```
@@ -165,10 +165,10 @@ On a machine that has internet, save the installer as a file:
 pip download lib-installer
 ```
 
-That saves one file, such as `lib_installer-3.0.0-py3-none-any.whl`, where the number is the installer's version. Download the library too, from the green **Code** button, **Download ZIP**. Copy both to the machine that has no internet, then from your project:
+That saves one file, such as `lib_installer-3.0.1-py3-none-any.whl`, where the number is the installer's version. Download the library too, from the green **Code** button, **Download ZIP**. Copy both to the machine that has no internet, then from your project:
 
 ```bash
-pip install lib_installer-3.0.0-py3-none-any.whl
+pip install lib_installer-3.0.1-py3-none-any.whl
 lib-installer D:/Downloads/example-main.zip
 ```
 

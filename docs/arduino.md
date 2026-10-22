@@ -14,7 +14,7 @@ Install a library by its GitHub owner and name:
 lib-installer owner/example
 ```
 
-To see it work first, take [lib-installer-arduino](https://github.com/nimaltd/lib-installer-arduino), a library made for trying the installer on. It builds for any board, and prints on Serial. Its README walks through both places a library can go, a setting kept through an update, an option, and an uninstall.
+To see it work first, take [lib-installer-example-arduino](https://github.com/nimaltd/lib-installer-example-arduino), a library made for trying the installer on. It builds for any board, and prints on Serial. Its README walks through both places a library can go, a setting kept through an update, an option, and an uninstall.
 
 The installer finds Arduino's libraries folder by itself, so it runs from anywhere. Run from a sketch's folder, it asks where the library goes, as below.
 
@@ -184,7 +184,7 @@ A library another one needs stays, and the installer says which needs it. One th
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-arduino](https://github.com/nimaltd/lib-installer-arduino).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-arduino](https://github.com/nimaltd/lib-installer-example-arduino).
 
 ```yaml
 name: example                      # the library's name, and its folder

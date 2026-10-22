@@ -14,7 +14,7 @@ From the root of your STM32 project, the folder CubeMX made, install a library b
 lib-installer owner/example
 ```
 
-To see it work first, take [lib-installer-stm32](https://github.com/nimaltd/lib-installer-stm32), a library made for trying the installer on. It builds in any STM32 project CubeMX made, with nothing to set up, and blinks an LED without `HAL_Delay()`. Its README walks through an install, an update that keeps a setting you changed, an option, and an uninstall.
+To see it work first, take [lib-installer-example-stm32](https://github.com/nimaltd/lib-installer-example-stm32), a library made for trying the installer on. It builds in any STM32 project CubeMX made, with nothing to set up, and blinks an LED without `HAL_Delay()`. Its README walks through an install, an update that keeps a setting you changed, an option, and an uninstall.
 
 ### Files that become yours
 
@@ -213,7 +213,7 @@ It cannot switch a peripheral on for you. The `.ioc` belongs to CubeMX, and edit
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone. Releases before 1.9.0 called it `library.yml`, and the installer still reads that name when there is no `installer.yml`, so a version pinned with `--ref` from before the rename installs as it always did.
 
-Every key the installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-stm32](https://github.com/nimaltd/lib-installer-stm32).
+Every key the installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-stm32](https://github.com/nimaltd/lib-installer-example-stm32).
 
 ```yaml
 name: example                      # the library's name, and its folder in the project

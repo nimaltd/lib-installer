@@ -15,7 +15,7 @@ lib-installer owner/example
 west build -b nrf52840dk/nrf52840
 ```
 
-To see it work first, take [lib-installer-zephyr](https://github.com/nimaltd/lib-installer-zephyr), a library made for trying the installer on. It builds in any Zephyr application, `native_sim` included, with its settings in Kconfig. Its README walks through an install, a setting changed in `prj.conf`, an option, and an uninstall. nRF Connect SDK applications are Zephyr applications, and install the same way.
+To see it work first, take [lib-installer-example-zephyr](https://github.com/nimaltd/lib-installer-example-zephyr), a library made for trying the installer on. It builds in any Zephyr application, `native_sim` included, with its settings in Kconfig. Its README walks through an install, a setting changed in `prj.conf`, an option, and an uninstall. nRF Connect SDK applications are Zephyr applications, and install the same way.
 
 ### What happens
 
@@ -204,7 +204,7 @@ You install only the one you want, and what it needs goes in first, each as a mo
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. For a working one to copy, see [lib-installer-zephyr](https://github.com/nimaltd/lib-installer-zephyr). What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. For a working one to copy, see [lib-installer-example-zephyr](https://github.com/nimaltd/lib-installer-example-zephyr). What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210).
 
 ```yaml
 name: example                      # the library's name, its folder and its Kconfig symbol

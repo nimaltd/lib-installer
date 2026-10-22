@@ -15,7 +15,7 @@ lib-installer owner/example
 idf.py build
 ```
 
-To see it work first, take [lib-installer-esp32](https://github.com/nimaltd/lib-installer-esp32), a library made for trying the installer on. It builds for any ESP32 chip, with its settings in menuconfig. Its README walks through an install, a setting changed, an option, and an uninstall.
+To see it work first, take [lib-installer-example-esp32](https://github.com/nimaltd/lib-installer-example-esp32), a library made for trying the installer on. It builds for any ESP32 chip, with its settings in menuconfig. Its README walks through an install, a setting changed, an option, and an uninstall.
 
 It runs from any shell, ESP-IDF's own included: it needs Python and nothing of ESP-IDF's.
 
@@ -234,7 +234,7 @@ You install only the one you want, and what it needs goes in first, each as a co
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-esp32](https://github.com/nimaltd/lib-installer-esp32).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-esp32](https://github.com/nimaltd/lib-installer-example-esp32).
 
 ```yaml
 name: example                      # the library's name, its component and its folder
