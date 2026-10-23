@@ -94,6 +94,25 @@ Not in `library.json`: PlatformIO gives the `build_flags` of a `library.json` to
 
 Every install writes the lines again from the library's new `installer.yml`, and an uninstall takes them out, with the section the installer added, so `platformio.ini` is back to the byte it was.
 
+### Build flags
+
+A library can need a flag of its own for the whole build, from 4.0.0, such as `-Wl,-u,_printf_float`, without which `printf("%f")` prints nothing on many chips. It goes into the same block, after the defines, and a title or a note the library gives it is written as a comment of `platformio.ini`'s, `;`:
+
+```ini
+[env]
+build_flags =
+    ; >>> lib-installer: example >>>
+    -DEXAMPLE_FAST
+    ; ******************************************************************************
+    ; Printing
+    ; ******************************************************************************
+    ; printf("%f") prints nothing without it
+    -Wl,-u,_printf_float
+    ; <<< lib-installer: example <<<
+```
+
+PlatformIO reads the comments as comments, and gives every environment the flags, as it does the defines. There is no blank line in the block: in an ini file one reads as the end of the value, to a person and to many a tool, if not to PlatformIO.
+
 ### Frameworks and platforms
 
 PlatformIO leaves a library out of any build whose framework or platform the library does not list, without a word, and your `#include` then simply finds nothing. So before anything is written, the installer reads every environment in `platformio.ini` and names any the library will not build in:
@@ -187,7 +206,7 @@ A library another one needs stays, and the installer says which needs it. One th
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-pio](https://github.com/nimaltd/lib-installer-example-pio).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 4.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 4.0.0, and how a manifest from before reads, is under [Where everything goes, from 4.0.0](#where-everything-goes-from-400), and what changed in 2.1.0 under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-pio](https://github.com/nimaltd/lib-installer-example-pio).
 
 ```yaml
 name: example                      # the library's name, and its folder in lib/
@@ -204,7 +223,7 @@ category: storage                  # sensor, storage, display, communication, wi
 provides: []                       # what it gives other libraries: [rtos] for an RTOS
 
 requires:
-  lib_installer: 3.0.0             # the oldest lib-installer that reads this file
+  lib_installer: 4.0.0             # the oldest lib-installer that reads this file
   libraries:                       # other libraries, installed first into lib/
     - osal >= 1.0.0                # no owner means nimaltd
     - owner/lib                    # anyone else's, as owner/name
@@ -260,14 +279,21 @@ run:                               # steps run once the files are in, each asked
     args: [device.key]             # or command: [program, arguments], with no shell
     unless: device.key             # skipped when this file is in the project already
 
-pio:                               # read by lib-installer only, for library.json
-  frameworks: [arduino, espidf]    # the frameworks it builds with, as platformio.ini
+pio:                               # read by lib-installer only
+  project:                         # what it writes into the project's platformio.ini
+    build_flags:                   # flags for every file of the build, after its defines
+      - -Wl,-u,_printf_float       # as the compiler takes them: letters, digits and
+                                   # _ . + - / = , : only
+  library:                         # what it writes into its own library.json
+    frameworks: [arduino, espidf]  # the frameworks it builds with, as platformio.ini
                                    # names them; any, "*", when left out
-  platforms: [espressif32]         # the platforms it builds for; any, "*", when left out
-  dependencies:                    # PlatformIO Registry libraries it needs, as
-    - bblanchon/ArduinoJson@^7     # owner/name, with @version when one is needed.
+    platforms: [espressif32]       # the platforms it builds for; any, "*", when left out
+    dependencies:                  # PlatformIO Registry libraries it needs, as
+      - bblanchon/ArduinoJson@^7   # owner/name, with @version when one is needed.
                                    # PlatformIO installs them by itself
 ```
+
+`pio.project.build_flags` can be given in groups, each under its title, and a flag with a note, as `- -Wl,-u,_printf_float: printf("%f") prints nothing without it`: see [Build flags](#build-flags). What is under `pio.library` goes into `library.json`, which is JSON and has no comments, so its lists are plain, with no title and no note.
 
 Keys only the other platforms read, such as `zephyr`, `esp32` and `arduino`, can stay in the same file. A run on this platform skips them.
 
@@ -278,6 +304,21 @@ Leave `version` out. The installer reads the version from the `@version` tag in 
 In YAML, `*` alone starts something else, so write any as `"*"` or `["*"]`, or leave the key out.
 
 What 2.0.0 brought needs a manifest asking for 2.0.0 or newer: `once` files in the project's folder, `run`, or a library it needs given with an `@` or a `manifest`. The version also decides where `once` files go. A manifest asking for 2.0.0 or newer puts them in the project's folder, and one asking for less keeps the meaning it was written for, the library's own folder, so a release tagged before 2.0.0 still installs and builds as it did.
+
+### Where everything goes, from 4.0.0
+
+4.0.0 gives the `pio` section a place for everything the library writes, by where it goes. What it writes into the project's `platformio.ini` is under `pio.project`: `build_flags`, new in 4.0.0, the flags every file of the build gets, written after the library's defines in its block. What it writes into its own `library.json` is under `pio.library`: `frameworks`, `platforms` and `dependencies`, which were right under `pio` before.
+
+| Before 4.0.0 | From 4.0.0 | Written into |
+|---|---|---|
+| | `pio.project.build_flags` | the library's block of `build_flags` in `platformio.ini`, after its defines |
+| `pio.frameworks` | `pio.library.frameworks` | `library.json` |
+| `pio.platforms` | `pio.library.platforms` | `library.json` |
+| `pio.dependencies` | `pio.library.dependencies` | `library.json` |
+
+A manifest asking for 4.0.0 or newer has the new places. A key of the `pio` section from before is refused there, with the place to use, and so is any other key the section does not hold, such as `framework` for `frameworks`, which was passed by before, and what it said with it. One asking for less keeps the meanings it was written for, and the new keys are refused there: asking for 4.0.0 is what makes an older lib-installer stop and say to update, where it would otherwise pass them by. Any other key is named there in a warning, and the library installs as it did. A library given twice under `dependencies` is refused whatever the manifest asks for: `library.json` holds one version of each, and the second took the first one's place without a word.
+
+A flag goes into `platformio.ini` as it stands, and PlatformIO hands it to the compiler and the linker of every file, so the installer takes one only as the compiler takes it: one or more words of letters, digits and `_ . + - / = , :`, the first an option, such as `-O2`, `-Wl,--gc-sections` or `-I include`. A flag holding anything else is refused when the manifest is read: `;` or `#`, which start a comment there, a quote, `$`, which SCons expands, or a `!` at the start, which has PlatformIO run a command. A flag given twice is refused too. A define with a value in quotes, such as a string, has no place here, as it has none under `install.defines`.
 
 ### Paths, from 2.1.0
 
@@ -365,7 +406,7 @@ requires:
       minimum: 2.0.0
 ```
 
-Without an `@`, a library comes from its repository's default branch. The last form installs a library whose repository has no `installer.yml` of its own: yours carries one for it, at the path given, written as if it sat at the root of that repository. A library from the PlatformIO Registry is not one of these: name it under `pio.dependencies`.
+Without an `@`, a library comes from its repository's default branch. The last form installs a library whose repository has no `installer.yml` of its own: yours carries one for it, at the path given, written as if it sat at the root of that repository. A library from the PlatformIO Registry is not one of these: name it under `pio.library.dependencies`.
 
 ### What PlatformIO needs of a library
 

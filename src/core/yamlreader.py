@@ -276,14 +276,18 @@ def _split_flow(inner):
 
 
 def _split_key(line):
-    """Split "key: value" on the first colon that is not inside quotes."""
+    """
+    Split "key: value" on the first colon that is not inside quotes. Only a
+    quote that starts the key opens one, as in YAML: the apostrophe of
+    "gble's channel" is a plain character of the key.
+    """
     quote = None
 
     for index, char in enumerate(line.text):
         if quote:
             if char == quote:
                 quote = None
-        elif char in "'\"":
+        elif char in "'\"" and index == 0:
             quote = char
         elif char == ":":
             after = line.text[index + 1 :]
@@ -319,6 +323,15 @@ def _parse_mapping(lines, index, indent):
 
         if key is None:
             raise YamlError(f"line {line.number}: expected 'key: value', found {line.text!r}")
+
+        # A quoted key is its text, as PyYAML reads it: "a: b": names a: b.
+        quoted = _QUOTED.match(key)
+
+        if quoted:
+            key = quoted.group("body")
+
+        if key in result:
+            raise YamlError(_twice_message(line.number, key))
 
         if value:
             result[key] = line.block if line.block is not None else _scalar(value)
@@ -375,17 +388,65 @@ def _parse_sequence(lines, index, indent):
     return result, index
 
 
+def _twice_message(number, key):
+    """What is said of a key given twice in one mapping."""
+    return (f"line {number}: {key!r} is given twice in one place, and YAML would keep only the last "
+            "without a word. Give each its own name, or put the two together.")
+
+
+def _twice(node):
+    """
+    The first key given twice in one mapping of a document PyYAML composed, as
+    (line, key), or None. PyYAML keeps the last of two without a word, which
+    would drop half of a manifest's settings unseen.
+    """
+    import yaml
+
+    if isinstance(node, yaml.MappingNode):
+        seen = set()
+
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode):
+                if key.value in seen:
+                    return key.start_mark.line + 1, key.value
+
+                seen.add(key.value)
+
+            found = _twice(value)
+
+            if found:
+                return found
+
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            found = _twice(item)
+
+            if found:
+                return found
+
+    return None
+
+
 def parse(text):
     """
     Read a YAML document, preferring PyYAML when it is installed.
 
     Everything in this package goes through here rather than importing yaml
-    directly, so there is one place that decides which reader is in use.
+    directly, so there is one place that decides which reader is in use. A key
+    given twice in one mapping is refused by both.
     """
     try:
         import yaml
     except ImportError:
         return loads(text)
+
+    try:
+        found = _twice(yaml.compose(text, Loader=yaml.SafeLoader))
+    except yaml.YAMLError as error:
+        raise YamlError(str(error)) from error
+
+    if found:
+        raise YamlError(_twice_message(*found))
 
     try:
         return yaml.safe_load(text)

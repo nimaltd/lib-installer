@@ -12,10 +12,28 @@ import re
 from pathlib import Path
 
 from . import app, module
-from ..core import blocks, console
+from ..core import blocks, console, titles
 from ..core.installer import InstallError
-from ..core.manifest import ManifestError
+from ..core.manifest import ManifestError, asks_for, count_of, unknown_warnings
 from ..core.target import CHANGED, INFO, MANUAL, OK, WARN, Finding, Outcome, Platform
+
+# The release from which the zephyr section names the library's switch under
+# symbol, where kconfig named it, and gives every line it writes under where
+# it goes: project, the application's own files, and library, the library's
+# own folder. A manifest asking for less keeps the meanings it was written
+# for, and one asking for it stops an installer from before, which would read
+# the keys the old way.
+RENAMED = (4, 0, 0)
+
+# The keys of the zephyr section of a manifest asking for 4.0.0, and of its
+# two parts: what each writes, and into which file.
+KEYS = ("symbol", "settings", "project", "library")
+PROJECT_KEYS = ("conf", "sysbuild", "cmake")
+LIBRARY_KEYS = ("kconfig", "conf", "cmake")
+
+# The keys of the zephyr section of a manifest asking for less, which a key
+# beside them is warned about in.
+BEFORE_KEYS = ("kconfig", "defaults", "settings", "cmake", "sysbuild")
 
 # A Kconfig symbol as Zephyr writes them, without CONFIG_ in front.
 SYMBOL = re.compile(r"^[A-Z0-9_]+$")
@@ -63,16 +81,23 @@ def _symbol(text, where):
 
 
 class Requirement:
-    """A symbol the application has to have, and the value it needs: CONFIG_I2C=y."""
+    """
+    A symbol the application has to have, and the value it needs: CONFIG_I2C=y,
+    in its Kconfig file. From requires.kconfig, or zephyr.project.conf from
+    4.0.0, which key names.
+    """
 
-    def __init__(self, text):
+    def __init__(self, text, key="requires.kconfig"):
         name, _, value = str(text).partition("=")
-        self.symbol = _symbol(name, "requires.kconfig")
+        self.symbol = _symbol(name, key)
         self.value = value.strip() or "y"
+        # The title of the group it is listed in, and its note, from 4.0.0.
+        self.group = None
+        self.note = None
 
         if not VALUE.match(self.value):
             raise ManifestError(
-                f"requires.kconfig has {text!r}. Give a symbol, which is set to y, or "
+                f"{key} has {text!r}. Give a symbol, which is set to y, or "
                 'SYMBOL=value, with y, n, a number, 0x and a hex number, or "text".'
             )
 
@@ -89,26 +114,29 @@ class SysbuildSetting:
     """
     A setting of sysbuild, which builds MCUboot and the application as images
     of one build: SB_CONFIG_BOOTLOADER_MCUBOOT=y in the application's
-    sysbuild.conf. Written as zephyr.sysbuild lists it, without SB_CONFIG_.
+    sysbuild.conf. Written as zephyr.sysbuild lists it, or zephyr.project.sysbuild
+    from 4.0.0, which key names, without SB_CONFIG_.
 
     The value is written exactly as given. "${APP_DIR}/sign_key.pem" is expanded
     by sysbuild itself, when it writes each image's configuration, so it must
     reach sysbuild.conf as it is.
     """
 
-    def __init__(self, text):
+    def __init__(self, text, key="zephyr.sysbuild"):
         name, _, value = str(text).partition("=")
         name = name.strip()
 
         if name.startswith("SB_CONFIG_"):
             name = name[len("SB_CONFIG_"):]
 
-        self.symbol = _symbol(name, "zephyr.sysbuild")
+        self.symbol = _symbol(name, key)
         self.value = value.strip() or "y"
+        self.group = None
+        self.note = None
 
         if not VALUE.match(self.value):
             raise ManifestError(
-                f"zephyr.sysbuild has {text!r}. Give a symbol, which is set to y, or "
+                f"{key} has {text!r}. Give a symbol, which is set to y, or "
                 'SYMBOL=value, with y, n, a number, 0x and a hex number, or "text".'
             )
 
@@ -124,20 +152,23 @@ class SysbuildSetting:
 class Default:
     """
     A setting the library gives another symbol while its own is on, from
-    zephyr.defaults: BT, which is set to y, or BT_L2CAP_TX_MTU=498. Written into
-    the library's Kconfig as a configdefault, so it holds only while the
-    library is switched on, and a line of the application's own Kconfig files
-    that sets the same symbol wins.
+    zephyr.library.kconfig, or zephyr.defaults before 4.0.0, which key names:
+    BT, which is set to y, or BT_L2CAP_TX_MTU=498. Written into the library's
+    Kconfig as a configdefault, so it holds only while the library is switched
+    on, and a line of the application's own Kconfig files that sets the same
+    symbol wins.
     """
 
-    def __init__(self, text):
+    def __init__(self, text, key):
         name, _, value = str(text).partition("=")
-        self.symbol = _symbol(name, "zephyr.defaults")
+        self.symbol = _symbol(name, key)
         self.value = value.strip() or "y"
+        self.group = None
+        self.note = None
 
         if not VALUE.match(self.value):
             raise ManifestError(
-                f"zephyr.defaults has {text!r}. Give a symbol, which is set to y, or "
+                f"{key} has {text!r}. Give a symbol, which is set to y, or "
                 'SYMBOL=value, with y, n, a number, 0x and a hex number, or "text".'
             )
 
@@ -150,13 +181,45 @@ class Default:
         return f"Default({self.line})"
 
 
+class Assignment:
+    """
+    A setting of the library's Kconfig fragment, from zephyr.library.conf:
+    BT_AUTO_PHY_PERIPHERAL_2M, which is set to y, or BT_L2CAP_TX_MTU=247.
+    Written into zephyr/<name>.conf in the library's folder, which Zephyr reads
+    after prj.conf, so it is an assignment where a default is not: it sets a
+    member of a choice, or a symbol Kconfig reads before the library's own, and
+    wins over a line of prj.conf.
+    """
+
+    def __init__(self, text, key="zephyr.library.conf"):
+        name, _, value = str(text).partition("=")
+        self.symbol = _symbol(name, key)
+        self.value = value.strip() or "y"
+        self.group = None
+        self.note = None
+
+        if not VALUE.match(self.value):
+            raise ManifestError(
+                f"{key} has {text!r}. Give a symbol, which is set to y, or "
+                'SYMBOL=value, with y, n, a number, 0x and a hex number, or "text".'
+            )
+
+    @property
+    def line(self):
+        """The line in the fragment."""
+        return f"CONFIG_{self.symbol}={self.value}"
+
+    def __repr__(self):
+        return f"Assignment({self.line})"
+
+
 class Peripheral:
     """Hardware the library uses, for the user to give it in the devicetree."""
 
     def __init__(self, data):
         data = data if isinstance(data, dict) else {"type": data}
         self.type = str(data.get("type", "")).lower()
-        self.count = int(data.get("count", 1))
+        self.count = count_of(data.get("count", 1), f"requires.peripherals {self.type}")
         self.note = str(data.get("note", "") or "")
 
     def describe(self):
@@ -266,17 +329,112 @@ class Setting:
         return f"Setting({self.line})"
 
 
-class ZephyrPart:
-    """The zephyr section of installer.yml, with what it leaves out filled in."""
+def _refuse_moved(data):
+    """
+    In a manifest asking for 4.0.0, the keys of the zephyr section from before,
+    each refused with where it went, and any key the section does not have.
+    """
+    if "defaults" in data:
+        raise ManifestError(
+            "zephyr.defaults is zephyr.library.kconfig from 4.0.0. List the settings there, under library "
+            "and then kconfig."
+        )
 
-    def __init__(self, library, data):
+    if isinstance(data.get("kconfig"), str):
+        raise ManifestError(
+            f"zephyr.kconfig has {data['kconfig']!r}, one symbol. From 4.0.0 the library's switch is "
+            f"zephyr.symbol, as symbol: {data['kconfig']}, and its settings of other symbols are "
+            "zephyr.library.kconfig."
+        )
+
+    moved = {
+        "kconfig": "zephyr.library.kconfig from 4.0.0. List the settings there, under library and then kconfig.",
+        "conf": "zephyr.library.conf from 4.0.0. List the settings there, under library and then conf.",
+        "sysbuild": "zephyr.project.sysbuild from 4.0.0. List the settings there, under project and then "
+                    "sysbuild.",
+        "cmake": "zephyr.project.cmake and zephyr.library.cmake from 4.0.0: the lines of the application's "
+                 "CMakeLists.txt under project, by their place, before-zephyr or after-zephyr, and those of the "
+                 "library's own under library.",
+    }
+
+    for key, where in moved.items():
+        if key in data:
+            raise ManifestError(f"zephyr.{key} is {where}")
+
+    unknown = [str(key) for key in data if key not in KEYS]
+
+    if unknown:
+        raise ManifestError(f"zephyr has {', '.join(unknown)}. From 4.0.0 it holds {', '.join(KEYS)}.")
+
+
+def _refuse_new(data):
+    """
+    In a manifest asking for less than 4.0.0, the keys of the zephyr section
+    new in it, refused: an installer from before would not read them.
+    """
+    if "symbol" in data:
+        raise ManifestError(
+            "zephyr.symbol is new in 4.0.0: ask for it under requires, as lib_installer: 4.0.0, or "
+            "name the library's switch under zephyr.kconfig."
+        )
+
+    if isinstance(data.get("kconfig"), list):
+        raise ManifestError(
+            "zephyr.kconfig names the library's switch, one symbol, in a manifest asking for less than "
+            "4.0.0. A list of settings is zephyr.defaults there, and zephyr.library.kconfig from 4.0.0: "
+            "ask for it under requires, as lib_installer: 4.0.0."
+        )
+
+    for key in ("project", "library"):
+        if key in data:
+            raise ManifestError(
+                f"zephyr.{key} is new in 4.0.0: ask for it under requires, as lib_installer: 4.0.0."
+            )
+
+
+class ZephyrPart:
+    """
+    The zephyr section of installer.yml, with what it leaves out filled in.
+    renamed is whether the manifest asks for 4.0.0, whose zephyr section names
+    the library's switch under symbol, and lists what it writes under where it
+    goes: project, the application's own files, and library, its own folder,
+    each list in groups under their titles when it likes.
+    """
+
+    def __init__(self, library, data, renamed=False):
         if data is None:
             data = {}
 
         if not isinstance(data, dict):
             raise ManifestError("zephyr should hold kconfig and settings.")
 
-        self.symbol = _symbol(data["kconfig"], "zephyr.kconfig") if data.get("kconfig") else symbol_of(library.name)
+        # The keys of the release the manifest asks for. A key written as the
+        # other release has it is refused with the name to use, rather than
+        # read wrongly.
+        if renamed:
+            _refuse_moved(data)
+        else:
+            _refuse_new(data)
+
+        self.renamed = renamed
+        switch = "symbol" if renamed else "kconfig"
+        given = data.get(switch)
+
+        # From 4.0.0 the switch can carry a note, as a setting's does, a
+        # mapping of one, GCORE: its note, written above it in the block.
+        self.symbol_note = None
+
+        if renamed and isinstance(given, dict):
+            if len(given) != 1:
+                raise ManifestError(
+                    f"zephyr.symbol has {given!r}. Give the library's switch alone, or with its note after a "
+                    "colon, on a line of its own below symbol, such as GCORE: builds gcore."
+                )
+
+            (given, note), = given.items()
+            self.symbol_note = titles.comment(note, f"The note of {given} under zephyr.symbol")
+
+        self.symbol = _symbol(given, f"zephyr.{switch}") if given else symbol_of(library.name)
 
         settings = data.get("settings") or []
 
@@ -290,6 +448,49 @@ class ZephyrPart:
         if twice:
             raise ManifestError(f"zephyr.settings has {', '.join(twice)} more than once.")
 
+        if renamed:
+            self._read_parts(library, data)
+        else:
+            self._read_before(library, data)
+
+        self._check(library)
+
+    def _read_parts(self, library, data):
+        """
+        What a manifest asking for 4.0.0 writes, by where it goes: under
+        project, into the application's prj.conf, sysbuild.conf and
+        CMakeLists.txt, each in a block of the library's; under library, into
+        its own Kconfig, Kconfig fragment and CMakeLists.txt.
+        """
+        project = titles.part(data.get("project"), "zephyr.project", PROJECT_KEYS)
+        own = titles.part(data.get("library"), "zephyr.library", LIBRARY_KEYS)
+
+        self.prj_key = "zephyr.project.conf"
+        self.sysbuild_key = "zephyr.project.sysbuild"
+        self.defaults_key = "zephyr.library.kconfig"
+        self.conf_key = "zephyr.library.conf"
+
+        self.prj = titles.listed(project.get("conf"), self.prj_key, lambda text: Requirement(text, self.prj_key))
+        self.sysbuild = titles.listed(project.get("sysbuild"), self.sysbuild_key,
+                                      lambda text: SysbuildSetting(text, self.sysbuild_key))
+        self.defaults = titles.listed(own.get("kconfig"), self.defaults_key,
+                                      lambda text: Default(text, self.defaults_key))
+        self.conf = titles.listed(own.get("conf"), self.conf_key, lambda text: Assignment(text, self.conf_key))
+        self.cmake = titles.cmake_groups(project.get("cmake"), own.get("cmake"), "zephyr",
+                                         (BEFORE_ZEPHYR, AFTER_ZEPHYR), MODULE)
+
+        # From 4.0.0 each platform's settings are in its own section: what a
+        # library sets in the application's prj.conf is zephyr.project.conf,
+        # and requires.kconfig, which every platform read, is refused, as
+        # ESP-IDF refuses it.
+        if getattr(library.requires, "kconfig", None):
+            raise ManifestError(
+                "requires.kconfig is zephyr.project.conf from 4.0.0: the settings a library writes into the "
+                "application's prj.conf, beside its switch. List them there, under project and then conf."
+            )
+
+    def _read_before(self, library, data):
+        """What a manifest asking for less than 4.0.0 writes, read the way it was written for."""
         # Lines of CMake the library needs beyond its files, by the place they
         # go, from 2.1.0: module, the module's CMakeLists.txt, or before-zephyr
         # and after-zephyr, the application's, above find_package(Zephyr) or at
@@ -299,22 +500,19 @@ class ZephyrPart:
                                    rooted=getattr(library, "rooted", False))
 
         # Settings of sysbuild, for the application's sysbuild.conf.
+        self.sysbuild_key = "zephyr.sysbuild"
         sysbuild = data.get("sysbuild") or []
 
         if not isinstance(sysbuild, list):
             raise ManifestError("zephyr.sysbuild is a list of settings, such as [BOOTLOADER_MCUBOOT].")
 
         self.sysbuild = [SysbuildSetting(entry) for entry in sysbuild]
-        names = [setting.symbol for setting in self.sysbuild]
-        twice = sorted({name for name in names if names.count(name) > 1})
 
-        if twice:
-            raise ManifestError(f"zephyr.sysbuild has {', '.join(twice)} more than once.")
-
-        # Settings the library gives other symbols while its own is on, written
-        # as requires.kconfig is. Each becomes a configdefault in its Kconfig, so
-        # the application's prj.conf holds only the library's switch, and any
-        # line of its own there wins.
+        # Settings the library gives other symbols while its own is on, from
+        # 2.1.0, written as requires.kconfig is. Each becomes a configdefault
+        # in its Kconfig, so the application's prj.conf holds only the
+        # library's switch, and any line of its own there wins.
+        self.defaults_key = "zephyr.defaults"
         defaults = data.get("defaults") or []
 
         if not isinstance(defaults, list):
@@ -325,29 +523,131 @@ class ZephyrPart:
                 "zephyr.defaults is new in 2.1.0: ask for it under requires, as zephyr_installer: 2.1.0."
             )
 
-        self.defaults = [Default(entry) for entry in defaults]
+        self.defaults = [Default(entry, self.defaults_key) for entry in defaults]
+
+        # A Kconfig fragment of the library's own is new in 4.0.0.
+        self.conf_key = "zephyr.conf"
+
+        if data.get("conf"):
+            raise ManifestError(
+                "zephyr.conf is no key of a manifest asking for less than 4.0.0. A library's Kconfig fragment "
+                "is zephyr.library.conf from 4.0.0: ask for it under requires, as lib_installer: 4.0.0."
+            )
+
+        self.conf = []
+
+        # The settings it writes into the application's Kconfig file, beside
+        # its switch.
+        self.prj_key = "requires.kconfig"
+        self.prj = list(getattr(library.requires, "kconfig", []))
+
+        # A key the section does not have, such as a misspelt defaults, which
+        # would take what it says with it unseen: warned about, since a
+        # release made with it has to keep installing as it did.
+        self.unknown = [str(key) for key in data if key not in BEFORE_KEYS]
+
+    def _check(self, library):
+        """
+        What every release refuses of the lists: a symbol given twice in one,
+        the library's switch where it cannot be, a symbol in two of them, which
+        would never count in one, and the fragment's place taken by a file of
+        the library's own.
+        """
+        prj = [entry.symbol for entry in self.prj]
+
+        # requires.kconfig was never checked so, and a manifest from before
+        # keeps installing as it did.
+        if self.renamed:
+            twice = sorted({name for name in prj if prj.count(name) > 1})
+
+            if twice:
+                raise ManifestError(f"{self.prj_key} has {', '.join(twice)} more than once.")
+
+            if self.symbol in prj:
+                raise ManifestError(
+                    f"{self.prj_key} has {self.symbol}, the library's own switch, which the installer writes "
+                    "last in the block by itself, y, under the library's name. Give it a note under "
+                    f"zephyr.symbol, as {self.symbol}: its note."
+                )
+
+        names = [setting.symbol for setting in self.sysbuild]
+        twice = sorted({name for name in names if names.count(name) > 1})
+
+        if twice:
+            raise ManifestError(f"{self.sysbuild_key} has {', '.join(twice)} more than once.")
+
+        # The library's settings of other symbols: defaults, which hold while it
+        # is on, and which any line of the application's own wins over.
+        key = self.defaults_key
         names = [default.symbol for default in self.defaults]
         twice = sorted({name for name in names if names.count(name) > 1})
 
         if twice:
-            raise ManifestError(f"zephyr.defaults has {', '.join(twice)} more than once.")
+            raise ManifestError(f"{key} has {', '.join(twice)} more than once.")
 
         if self.symbol in names:
             raise ManifestError(
-                f"zephyr.defaults has {self.symbol}, the library's own switch. prj.conf switches it, "
+                f"{key} has {self.symbol}, the library's own switch. prj.conf switches it, "
                 "and the defaults hold while it is on."
             )
 
-        # A symbol set in prj.conf by requires.kconfig is an assignment, and a
-        # default for it would never be used.
-        required = {requirement.symbol for requirement in getattr(library.requires, "kconfig", [])}
-        both = sorted(required & set(names))
+        # A symbol set in prj.conf is an assignment, and a default for it would
+        # never be used.
+        both = sorted(set(prj) & set(names))
 
         if both:
             raise ManifestError(
-                f"{', '.join(both)} {'is' if len(both) == 1 else 'are'} in both requires.kconfig and "
-                "zephyr.defaults. Give each in one of them: requires.kconfig sets it in prj.conf, "
-                "zephyr.defaults gives it a default while the library is on."
+                f"{', '.join(both)} {'is' if len(both) == 1 else 'are'} in both {self.prj_key} and "
+                f"{key}. Give each in one of them: {self.prj_key} sets it in prj.conf, "
+                f"{key} gives it a default while the library is on."
+            )
+
+        # The library's Kconfig fragment, read after the application's Kconfig
+        # files: assignments, for what a default cannot set, a member of a
+        # choice, or a symbol Kconfig reads before the library's Kconfig.
+        conf = self.conf_key
+        assigned = [setting.symbol for setting in self.conf]
+        twice = sorted({name for name in assigned if assigned.count(name) > 1})
+
+        if twice:
+            raise ManifestError(f"{conf} has {', '.join(twice)} more than once.")
+
+        if self.symbol in assigned:
+            raise ManifestError(
+                f"{conf} has {self.symbol}, the library's own switch. The application's Kconfig file "
+                f"switches it, and {conf}, read after it, would decide in its place."
+            )
+
+        # What the fragment sets is set after prj.conf, and over any default,
+        # so the same symbol in prj.conf's block or among the defaults would
+        # never count.
+        both = sorted(set(prj) & set(assigned))
+
+        if both:
+            raise ManifestError(
+                f"{', '.join(both)} {'is' if len(both) == 1 else 'are'} in both {self.prj_key} and "
+                f"{conf}. Give each in one of them: {self.prj_key} sets it in prj.conf, {conf} "
+                "in the library's own Kconfig fragment, read after prj.conf."
+            )
+
+        both = sorted(set(names) & set(assigned))
+
+        if both:
+            raise ManifestError(
+                f"{', '.join(both)} {'is' if len(both) == 1 else 'are'} in both {key} and "
+                f"{conf}. Give each in one of them: {key} gives it a default while the "
+                f"library is on, {conf} sets it in every build."
+            )
+
+        # The fragment's place in the library's folder, which a file of the
+        # library's own would share, each install writing over the other.
+        place = f"zephyr/{module.fragment_name(library)}"
+        files = getattr(library, "extras", []) + getattr(library, "all_code_files", [])
+
+        if self.conf and place in {entry.destination for entry in files}:
+            raise ManifestError(
+                f"installer.yml puts a file of {library.name}'s own at {place}, where the installer writes "
+                f"the lines of {conf}. Give the file another place, or its lines under {conf}."
             )
 
 
@@ -455,7 +755,13 @@ class Zephyr(Platform):
         return chosen
 
     def read_manifest(self, manifest, data):
-        manifest.zephyr = ZephyrPart(manifest, data.get("zephyr"))
+        renamed = asks_for(data, RENAMED)
+        manifest.zephyr = ZephyrPart(manifest, data.get("zephyr"), renamed)
+
+        # Each option's own groups of CMake lines, read now that the release
+        # the manifest asks for, which says where they are, is known.
+        for option in manifest.options.values():
+            option.zephyr_cmake = titles.option_cmake(option, "zephyr", renamed, PLACES, MODULE)
 
         # A label names one group, among the library's and all its options'.
         labels = [group.label for group in manifest.zephyr.cmake]
@@ -470,15 +776,18 @@ class Zephyr(Platform):
                                 "options' groups counted. Give each its own label.")
 
     def read_option(self, option, data):
-        """An option's own groups of CMake lines, written while it is taken."""
+        """
+        An option's own zephyr part, kept for read_manifest(): its groups of
+        CMake lines, written while it is taken, are where the release the
+        manifest asks for says, which is known once the whole manifest is read.
+        """
         part = data.get("zephyr") if isinstance(data, dict) else None
 
         if part is not None and not isinstance(part, dict):
             raise ManifestError(f"options.{option.name}.zephyr should hold cmake.")
 
-        option.zephyr_cmake = blocks.groups((part or {}).get("cmake"), f"options.{option.name}.zephyr.cmake",
-                                            PLACES, MODULE, legacy=False, prefix=option.name,
-                                            rooted=getattr(option, "rooted", False))
+        option.zephyr_part = part or {}
+        option.zephyr_cmake = []
 
     def read_requirements(self, requirements, data):
         """The Zephyr part of requires: Kconfig symbols, and hardware."""
@@ -505,7 +814,7 @@ class Zephyr(Platform):
             if not setting.prompt_given:
                 found.append(f"zephyr.settings {setting.name} has no prompt, so menuconfig shows only its name")
 
-        return found
+        return found + unknown_warnings("zephyr", getattr(part, "unknown", []))
 
     def check(self, library, project_root):
         """What the application is missing for this library. Never stops an install."""
@@ -549,8 +858,9 @@ class Zephyr(Platform):
                     "Your line is the one used. Change it if the library is to work.",
                 ))
 
-        # The library's zephyr.defaults, which hold while it is on. A line of the
-        # application's that sets the same symbol wins, and says so.
+        # The library's settings of other symbols, zephyr.library.kconfig or,
+        # before 4.0.0, zephyr.defaults, which hold while it is on. A line of
+        # the application's that sets the same symbol wins, and says so.
         part = library.zephyr
 
         for default in part.defaults:
@@ -563,6 +873,25 @@ class Zephyr(Platform):
                     INFO, f"{have[1]} sets CONFIG_{default.symbol}={have[0]}, in place of "
                     f"{library.name}'s default {default.value}",
                     "Your line is the one used.",
+                ))
+
+        # The library's Kconfig fragment, zephyr.library.conf, read after the
+        # application's Kconfig files. A line of the application's that sets
+        # the same symbol loses to it, and is named, since nothing else would
+        # say so.
+        fragment = f"zephyr/{module.fragment_name(library)}"
+
+        for setting in part.conf:
+            have = assigned.get(setting.symbol)
+
+            if have is None or have[0] == setting.value:
+                findings.append(Finding(OK, f"{setting.line} in {fragment}, read after {conf}"))
+            else:
+                findings.append(Finding(
+                    WARN, f"{have[1]} sets CONFIG_{setting.symbol}={have[0]}, and {library.name}'s "
+                    f"{part.conf_key} sets {setting.value}",
+                    f"{fragment} is read after {have[1]}, so its line is the one used. A file given "
+                    "with -DEXTRA_CONF_FILE is read after it.",
                 ))
 
         for peripheral in library.requires.peripherals:
@@ -591,7 +920,8 @@ class Zephyr(Platform):
     def uninstall(self, project_root, library):
         """
         Take the library out of the application's CMakeLists.txt and Kconfig
-        file, and delete the module files this wrote into its folder.
+        file, and delete the module files and the Kconfig fragment this wrote
+        into its folder.
         """
         defined = module.symbols(library.destination) if library.destination is not None else []
         outcomes = app.uninstall(project_root, library.name)

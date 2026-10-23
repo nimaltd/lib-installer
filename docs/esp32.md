@@ -99,6 +99,21 @@ A library that needs no symbol gets no block. A symbol you already set yourself,
 # CONFIG_FREERTOS_HZ=1000  (left out: sdkconfig.defaults sets CONFIG_FREERTOS_HZ=100)
 ```
 
+A library can give its symbols in groups, each under a title, and a symbol with a note, from 4.0.0. The block carries both as comments, so you see why each line is there:
+
+```
+# >>> lib-installer: example >>>
+# Added by lib-installer, and written again on every install, so set
+# example's symbols below this block rather than in it.
+
+# ******************************************************************************
+# A faster tick
+# ******************************************************************************
+# one tick a millisecond
+CONFIG_FREERTOS_HZ=1000
+# <<< lib-installer: example <<<
+```
+
 ESP-IDF reads `sdkconfig.defaults` only for a symbol your `sdkconfig` does not have yet, and `sdkconfig` is what it builds with. So the installer also reads your `sdkconfig`, and names every symbol it holds at another value:
 
 ```
@@ -149,7 +164,7 @@ list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_SOURCE_DIR}/example.defaults")
 # <<< lib-installer: example/before-project <<<
 ```
 
-Every block is written again on every install, so put your own lines outside them. An edit made inside one is noticed on the next install, and the file as it was is in the `.bak`.
+Every block is written again on every install, so put your own lines outside them. An edit made inside one is noticed on the next install, and the file as it was is in the `.bak`. A title the library gives a group of its lines is written among them, between two lines of stars, as in `sdkconfig.defaults`.
 
 ### Files that become yours
 
@@ -234,7 +249,7 @@ You install only the one you want, and what it needs goes in first, each as a co
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-esp32](https://github.com/nimaltd/lib-installer-example-esp32).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 4.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. What changed in 4.0.0, and how a manifest from before reads, is under [Where each line goes, from 4.0.0](#where-each-line-goes-from-400), and what changed in 2.1.0 under [Paths, from 2.1.0](#paths-from-210). For a working one to copy, see [lib-installer-example-esp32](https://github.com/nimaltd/lib-installer-example-esp32).
 
 ```yaml
 name: example                      # the library's name, its component and its folder
@@ -251,7 +266,7 @@ category: storage                  # sensor, storage, display, communication, wi
 provides: []                       # what it gives other libraries: [rtos] for an RTOS
 
 requires:
-  lib_installer: 3.0.0           # the oldest lib-installer that reads this file
+  lib_installer: 4.0.0             # the oldest lib-installer that reads this file
   libraries:                       # other libraries, installed first when missing
     - osal >= 1.0.0                # no owner means nimaltd; >= the oldest that will do
     - owner/lib                    # anyone else's, as owner/name
@@ -259,9 +274,6 @@ requires:
     - source: owner/other@v2.9.3   # a repository with no installer.yml of its own,
       manifest: manifests/other.yml  # with one this library carries for it
       minimum: 2.9.0               # the oldest version that will do
-  kconfig:                         # symbols it needs, set in sdkconfig.defaults
-    - FREERTOS_HZ=1000             # SYMBOL=value: y, n, a number, 0x.. or "text"
-    - SPI_MASTER_IN_IRAM           # a symbol alone is set to y
   peripherals:                     # hardware it uses, named to the user
     - type: i2c                    # what it is
       count: 1                     # how many
@@ -311,15 +323,6 @@ run:                               # steps run once the files are in, each asked
     unless: product.key            # skipped when this file is in the project already
 
 esp32:                             # read by lib-installer only
-  requires:                        # ESP-IDF components the code uses: its REQUIRES
-    - esp_timer
-    - esp_driver_i2c
-  cmake:                           # lines of CMake, under the place they go:
-    component:                     # the component's CMakeLists.txt
-      - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
-    before-project:                # the project's, above include(project.cmake)
-      - list(APPEND EXTRA_COMPONENT_DIRS "{library}/extra")
-    after-project: []              # the project's, at its end
   settings:                        # Kconfig symbols for menuconfig, CONFIG_<name> in the code
     - name: EXAMPLE_POLL_CHUNK     # the symbol, best started with the library's name
       type: int                    # bool, int, hex or string
@@ -328,7 +331,23 @@ esp32:                             # read by lib-installer only
       prompt: Bytes read per call  # one line, shown in menuconfig
       help: |                      # as many lines as it takes, shown in menuconfig
         A read by polling moves at most this many bytes per call.
+  project:                         # what it writes into the project's own files
+    conf:                          # symbols it needs, in its block of sdkconfig.defaults
+      - FREERTOS_HZ=1000           # SYMBOL=value: y, n, a number, 0x.. or "text"
+      - SPI_MASTER_IN_IRAM         # a symbol alone is set to y
+    cmake:                         # lines of the project's CMakeLists.txt, by their place:
+      before-project:              # above include(project.cmake)
+        - list(APPEND EXTRA_COMPONENT_DIRS "{library}/extra")
+      after-project: []            # at its end
+  library:                         # what it writes into its own component
+    requires:                      # ESP-IDF components the code uses: its REQUIRES
+      - esp_timer
+      - esp_driver_i2c
+    cmake:                         # lines of the component's CMakeLists.txt
+      - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
 ```
+
+Every list under `esp32.project` and `esp32.library` but `requires` can be given in groups, each under its title, and a symbol with a note: see [Titles and notes, from 4.0.0](#titles-and-notes-from-400).
 
 Keys only the other platforms read, such as `requires.hal_modules` and `zephyr`, can stay in the same file. A run on this platform skips them.
 
@@ -338,6 +357,23 @@ Leave `version` out. The installer reads the version from the `@version` tag in 
 
 What 2.0.0 brought needs a manifest asking for 2.0.0 or newer: `once` files in the project's folder, `run`, groups under `esp32.cmake`, or a library it needs given with an `@` or a `manifest`. The version also decides where `once` files go. A manifest asking for 2.0.0 or newer puts them in the project's folder, and one asking for less keeps the meaning it was written for, the library's own folder, so a release tagged before 2.0.0 still installs and builds as it did.
 
+### Where each line goes, from 4.0.0
+
+4.0.0 gives the `esp32` section a place for everything the library writes, by where it goes. What it writes into the project's own files is under `esp32.project`: `conf`, its block in `sdkconfig.defaults`, which `requires.kconfig` listed, and `cmake`, its lines of the project's `CMakeLists.txt`, under `before-project` and `after-project`. What it writes into its own component is under `esp32.library`: `requires`, the components its code uses, which `esp32.requires` listed, and `cmake`, the lines of the component's `CMakeLists.txt`, which `esp32.cmake` had under `component`. `esp32.settings` stays where it was.
+
+| Before 4.0.0 | From 4.0.0 | Written into |
+|---|---|---|
+| `requires.kconfig` | `esp32.project.conf` | the library's block in the project's `sdkconfig.defaults` |
+| `esp32.cmake`, `before-project` | `esp32.project.cmake`, `before-project` | the project's `CMakeLists.txt`, above `include(project.cmake)` |
+| `esp32.cmake`, `after-project` | `esp32.project.cmake`, `after-project` | the project's `CMakeLists.txt`, at its end |
+| `esp32.cmake`, `component` | `esp32.library.cmake` | the component's `CMakeLists.txt`, after `idf_component_register()` |
+| `esp32.requires` | `esp32.library.requires` | `REQUIRES` of the component |
+| `esp32.settings` | `esp32.settings` | the component's `Kconfig`, for menuconfig |
+
+The blocks keep their names, `example/before-project` and the rest, so a library that moves its lines to where 4.0.0 has them writes the same files, and a project sees nothing move.
+
+A manifest asking for 4.0.0 or newer has the new places. A key of the `esp32` section from before is refused there, with the place to use, and so is `requires.kconfig`: from 4.0.0 each platform's settings are in its own section, Zephyr's in `zephyr.project.conf`, so a manifest for both keeps each in its place. Any other key the section does not hold, such as `setting` for `settings`, is refused with the keys it does, where before it was passed by, and what it said with it. One asking for less keeps the meanings it was written for, and the new keys are refused there: asking for 4.0.0 is what makes an older lib-installer stop and say to update, where it would otherwise install the library without what they say. Any other key is named there in a warning, and the library installs as it did.
+
 ### Paths, from 2.1.0
 
 A manifest asking for 2.1.0 or newer, as one asking for 3.0.0 does, has one rule for every path that names a place in the project's folder: it starts at the project's folder. `{library}` at its start names the library's own folder instead, wherever `--dir` put it. A path that names a file of the library, under `headers`, `sources`, `extras` or `once`, or as a `from`, is a path in the repository, as always.
@@ -346,7 +382,7 @@ And every file is copied to the path it has, unchanged, unless a `to` says other
 
 A `to` gives a file another place, where its list puts files. Under `headers`, `sources` and `extras` that is the library's folder, so `- from: src/example.h, to: example.h` lands at the top of it, and the include path follows. Under `once` it is the project's folder, where every `once` file lands. A `root` puts an extra in the project's folder instead of the library's: `- root: tools` takes the library's `tools/` to the project's `tools/`. Code has no `root`, since it is built in the library's folder, and a `once` file needs none. Wherever a `from` would be the same path as its `to` or `root`, leave it out: `- root: tools` is `- from: tools, root: tools`.
 
-And `esp32.cmake` gives its lines under the places they go, with no `label`, `where` or `lines`: see [More CMake for a library](#more-cmake-for-a-library).
+And `esp32.cmake` gives its lines under the places they go, with no `label`, `where` or `lines`, the places 4.0.0 shares between `esp32.project.cmake` and `esp32.library.cmake`: see [More CMake for a library](#more-cmake-for-a-library).
 
 | Key | Starts at |
 |---|---|
@@ -355,7 +391,7 @@ And `esp32.cmake` gives its lines under the places they go, with no `label`, `wh
 | `once.to`, `extras.root` | the project's folder |
 | `run.script`, `run.unless` | the project's folder, or the library's with `{library}/` |
 | `{library}` in `run.args` and `run.command` | the library's folder, as the step names it from the project's folder |
-| `{library}` in `esp32.cmake` lines | `${CMAKE_CURRENT_SOURCE_DIR}/<the library's folder>` in the project's `CMakeLists.txt`, `${COMPONENT_DIR}` in the component's |
+| `{library}` in lines of CMake | `${CMAKE_CURRENT_SOURCE_DIR}/<the library's folder>` in the project's `CMakeLists.txt`, `${COMPONENT_DIR}` in the component's |
 
 An extra with a `root` lands in the project's folder, as the library's own: a file at `root` itself, the files of a folder under it with their path below it, those a wildcard matches under it with their names; an extra's `to` places them the same way in the library's folder. It is written again on every install, a file of it the new version no longer ships is removed, and an uninstall takes it out. A file already there that the installer did not put there is the user's, and is never written over: the install stops and says so.
 
@@ -372,32 +408,95 @@ run:
 
 A step's script has to be one the install puts in place, an extra with a `root` or a `once` file, or with `{library}`, a file of the library's folder; anything else is refused when the manifest is read. A manifest asking for less than 2.1.0 keeps the meaning it was written for: its script is found in the library as it was fetched, and `{library}` is left as it is written.
 
-### More CMake for a library
+### Titles and notes, from 4.0.0
 
-A library that needs more than its files and its defines, a library linked in, an option for its compiler, or a line in the project's own `CMakeLists.txt`, lists the lines under `esp32.cmake`, under the place each goes:
+Every list under `esp32.project` and `esp32.library` but `requires` can be given in groups, each under its title, and a symbol with a note. The installer writes both into the file the list goes into, as comments, so whoever reads the project's `sdkconfig.defaults`, or the component's `CMakeLists.txt`, sees why each line is there:
 
 ```yaml
 esp32:
-  cmake:
-    component:
-      - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
-      - target_compile_options(${COMPONENT_LIB} PRIVATE -O2)
-    before-project:
-      - list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_SOURCE_DIR}/example.defaults")
-    after-project:
-      - idf_component_get_property(main_lib main COMPONENT_LIB)
-      - target_compile_definitions(${main_lib} PRIVATE EXAMPLE_IN_MAIN)
+  project:
+    conf:
+      A faster tick:
+        - FREERTOS_HZ=1000: one tick a millisecond
+      Quiet logs:
+        - LOG_DEFAULT_LEVEL_WARN
+        - LOG_COLORS=n: plain text, for a file
+  library:
+    cmake:
+      Math:
+        - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
 ```
 
-| Place | Written into | For |
+The block in `sdkconfig.defaults`:
+
+```
+# >>> lib-installer: example >>>
+# Added by lib-installer, and written again on every install, so set
+# example's symbols below this block rather than in it.
+
+# ******************************************************************************
+# A faster tick
+# ******************************************************************************
+# one tick a millisecond
+CONFIG_FREERTOS_HZ=1000
+
+# ******************************************************************************
+# Quiet logs
+# ******************************************************************************
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# plain text, for a file
+CONFIG_LOG_COLORS=n
+# <<< lib-installer: example <<<
+```
+
+And the component's `CMakeLists.txt`:
+
+```cmake
+# >>> lib-installer: example/component >>>
+# From example's installer.yml, and written again on every install.
+# ******************************************************************************
+# Math
+# ******************************************************************************
+target_link_libraries(${COMPONENT_LIB} PRIVATE m)
+# <<< lib-installer: example/component <<<
+```
+
+- A list is either plain, as it always was, or a mapping of titles to their lists. A plain list is written as it always was, with no title.
+- A title is one line, written between two lines of stars, 80 columns wide, above its group, and a group after the first starts after a blank line. The same holds in the lines of CMake, in the project's file and the component's.
+- A note follows its symbol after a colon, `LOG_COLORS=n: plain text`, and is written as a comment of its own above the symbol's line. A symbol the project sets itself keeps its note, above the line left out.
+- A line of CMake takes a title but no note: a line holding `: ` is CMake's own, and goes in quotes, so that YAML reads it as a line. A title or a note holding `: ` goes in quotes too, as any YAML text does.
+- `esp32.library.requires` is a plain list of names, with no title and no note.
+- A title or a note is one line, and none may hold what the installer marks its blocks with, `>>>`, `<<<` or `USER CODE`, nor read as a setting, as `CONFIG_X is not set` does. Such a manifest is refused when it is read.
+- Two groups with one title are refused, as is any key given twice, and so is one symbol given twice: the line read last would quietly undo the first.
+
+### More CMake for a library
+
+A library that needs more than its files and its defines, a library linked in, an option for its compiler, or a line in the project's own `CMakeLists.txt`, lists the lines by the file each goes into: the project's under `esp32.project.cmake`, by their place, and the component's own under `esp32.library.cmake`:
+
+```yaml
+esp32:
+  project:
+    cmake:
+      before-project:
+        - list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_SOURCE_DIR}/example.defaults")
+      after-project:
+        - idf_component_get_property(main_lib main COMPONENT_LIB)
+        - target_compile_definitions(${main_lib} PRIVATE EXAMPLE_IN_MAIN)
+  library:
+    cmake:
+      - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
+      - target_compile_options(${COMPONENT_LIB} PRIVATE -O2)
+```
+
+| Key | Written into | For |
 |---|---|---|
-| `component` | the component's `CMakeLists.txt`, after `idf_component_register()`, where `${COMPONENT_LIB}` is its own library | the component itself |
-| `before-project` | the project's `CMakeLists.txt`, above `include($ENV{IDF_PATH}/tools/cmake/project.cmake)` | what ESP-IDF reads as the project starts, such as `EXTRA_COMPONENT_DIRS` or `SDKCONFIG_DEFAULTS` |
-| `after-project` | the project's `CMakeLists.txt`, at its end | what needs the project's own targets, every component's library among them |
+| `esp32.library.cmake` | the component's `CMakeLists.txt`, after `idf_component_register()`, where `${COMPONENT_LIB}` is its own library | the component itself |
+| `esp32.project.cmake`, `before-project` | the project's `CMakeLists.txt`, above `include($ENV{IDF_PATH}/tools/cmake/project.cmake)` | what ESP-IDF reads as the project starts, such as `EXTRA_COMPONENT_DIRS` or `SDKCONFIG_DEFAULTS` |
+| `esp32.project.cmake`, `after-project` | the project's `CMakeLists.txt`, at its end | what needs the project's own targets, every component's library among them |
 
-The lines of each place are written as one block, between two lines that name the library and the place, `# >>> lib-installer: example/before-project >>>` and its pair, in the manifest's order. Every install writes them again: a place whose lines changed is updated, and one the manifest no longer has is taken out. A line keeps the spaces it starts with, so the body of an `if()` can be indented. `{library}` in a line names the library's folder, as `${CMAKE_CURRENT_SOURCE_DIR}/components/example` in the project's file and `${COMPONENT_DIR}` in the component's, wherever `--dir` put it; anything else in a line is CMake's own, written as it stands. A line holding a colon, as `message()` often does, goes in quotes, or YAML reads it as a mapping.
+The lines of each place are written as one block, between two lines that name the library and the place, `# >>> lib-installer: example/before-project >>>` and its pair, and `example/component` for the component's own, in the manifest's order. Every install writes them again: a place whose lines changed is updated, and one the manifest no longer has is taken out. A line keeps the spaces it starts with, so the body of an `if()` can be indented. `{library}` in a line names the library's folder, as `${CMAKE_CURRENT_SOURCE_DIR}/components/example` in the project's file and `${COMPONENT_DIR}` in the component's, wherever `--dir` put it; anything else in a line is CMake's own, written as it stands. A line holding a colon, as `message()` often does, goes in quotes, or YAML reads it as a mapping.
 
-An option brings lines of its own under `options.<name>.esp32.cmake`, the same way, written while it is chosen and taken out by the update that turns it off. Its blocks are named after it and the place, `example/littlefs-component`, so they never meet the library's.
+An option brings lines of its own under `options.<name>.esp32.project.cmake` and `options.<name>.esp32.library.cmake`, the same way, written while it is chosen and taken out by the update that turns it off. Its blocks are named after it and the place, `example/littlefs-component`, so they never meet the library's.
 
 One thing about `SDKCONFIG_DEFAULTS`: once it is set, ESP-IDF reads only the files it lists, and no longer `sdkconfig.defaults` by itself. A group that adds a file to it names `sdkconfig.defaults` first, when the project has one and nothing set the list yet:
 
@@ -410,7 +509,7 @@ list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_SOURCE_DIR}/example.defaults")
 
 A component of headers alone is an interface library, so its lines use `INTERFACE` where one with sources uses `PRIVATE` or `PUBLIC`. The lines run when the user configures the build, the same as a `CMakeLists.txt` the library ships itself would, so they are the library's to answer for.
 
-The forms from before 2.1.0 still install. A list of groups, each with a `label`, a `where`, `component` when left out, and its `lines`, writes each group as a block named after its label, `example/<label>`; a manifest moving to places has its old blocks taken out on the next install, and the new ones written. The form from before 2.0.0, a plain list of lines, is one group in `component`, written as it always was.
+The forms from before 4.0.0 still install. A manifest asking for 2.1.0 or 3.0.0 gives every line under `esp32.cmake`, under its place, `component`, `before-project` or `after-project`, and an option's under `options.<name>.esp32.cmake`; the blocks have the same names as 4.0.0's. Before 2.1.0, a list of groups, each with a `label`, a `where`, `component` when left out, and its `lines`, writes each group as a block named after its label, `example/<label>`; a manifest moving to places has its old blocks taken out on the next install, and the new ones written. The form from before 2.0.0, a plain list of lines, is one group in `component`, written as it always was.
 
 The user has a place in the component's file too. Its last lines are a `USER CODE` section, empty to start with, and every install keeps what is written in it, the way a configuration header keeps settings:
 

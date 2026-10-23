@@ -98,6 +98,16 @@ NAMED = (3, 0, 0)
 # The platforms lib-installer installs into, as platform: and --platform name them.
 PLATFORMS = ("stm32", "zephyr", "esp32", "arduino", "pio")
 
+# The release from which a key a platform's section does not have is refused,
+# where before it was passed by without a word, and whatever it said with it.
+# A manifest asking for less is told about it, and installs as it did.
+CHECKED = (4, 0, 0)
+
+# A character a folder of install.include_dirs cannot hold: each is written as
+# it stands into the project's own files, an IDE's XML, a list Keil separates
+# with ;, a Makefile, so one of these would break the file it lands in.
+_UNSAFE_FOLDER = re.compile(r"[\"'<>&;\x00-\x1f]")
+
 
 def platforms_of(data):
     """
@@ -154,6 +164,55 @@ def unsafe_path(text):
         return "it climbs out with .."
 
     return None
+
+
+def include_folder(value):
+    """
+    A folder of install.include_dirs, as a path inside the library, or
+    ManifestError. It is written into the project's own files as it stands,
+    so it has to stay inside the library, and hold nothing those files would
+    read as anything but a path.
+    """
+    text = str(value).replace("\\", "/").strip()
+    why = unsafe_path(text)
+
+    if why is None and _UNSAFE_FOLDER.search(text):
+        why = ("it holds a quote, <, >, &, ; or a control character, which an IDE's project file "
+               "would not read as a path")
+
+    if why:
+        raise ManifestError(f"install.include_dirs has {value!r}: {why}. Give a folder inside the library, "
+                            "such as src.")
+
+    return text
+
+
+def count_of(value, where):
+    """How many of a peripheral a library needs: a whole number of one or more, or ManifestError."""
+    if isinstance(value, bool) or not str(value).strip().isdigit() or int(str(value).strip()) < 1:
+        raise ManifestError(f"{where} has a count of {value!r}. Give how many, a whole number from 1.")
+
+    return int(str(value).strip())
+
+
+def section_keys(data, section, known):
+    """
+    The keys of a platform's section, such as esp32, that it does not have.
+    A manifest asking for 4.0.0 is refused for one, with the keys it does
+    have; one asking for less gets a warning, and installs as it did.
+    """
+    part = data.get(section) if isinstance(data, dict) else None
+    unknown = [str(key) for key in part if key not in known] if isinstance(part, dict) else []
+
+    if unknown and asks_for(data, CHECKED):
+        raise ManifestError(f"{section} has {', '.join(unknown)}. It holds {', '.join(known)}.")
+
+    return unknown
+
+
+def unknown_warnings(section, unknown):
+    """What is said of the keys section_keys() found in a manifest asking for less than 4.0.0."""
+    return [f"{section}.{key} is no key lib-installer reads, so it was left out" for key in unknown]
 
 
 def asks_for(data, version):
@@ -897,9 +956,14 @@ class Manifest:
         self.once = [self._once_file(entry) for entry in data.get("once") or []]
 
         # Which folders go on the IDE's include path. Worked out from where the
-        # headers land, see include_dirs, unless the manifest says.
+        # headers land, see include_dirs, unless the manifest says. Each is
+        # written into the project's own files as it stands, so it is checked.
         declared = install.get("include_dirs")
-        self.declared_include_dirs = [str(d).replace("\\", "/") for d in declared] if declared else None
+
+        if declared and not isinstance(declared, list):
+            raise ManifestError("install.include_dirs is a list of folders inside the library, such as [src].")
+
+        self.declared_include_dirs = [include_folder(d) for d in declared] if declared else None
         # Defines the whole project is built with, for a library that reads its
         # settings through one, as littlefs reads LFS_DEFINES. The whole project
         # and not only the library's own files, because a define can change

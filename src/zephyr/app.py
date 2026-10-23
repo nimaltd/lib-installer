@@ -6,9 +6,11 @@ Short blocks are added, each between marker lines so it can be found and
 written again on the next install:
 
     CMakeLists.txt  adds the library's folder to ZEPHYR_EXTRA_MODULES, before
-                    find_package(Zephyr), which is when Zephyr reads it. And
-                    any group of the library's CMake lines whose place is the
-                    application's: above find_package(Zephyr), or at the end
+                    find_package(Zephyr), which is when Zephyr reads it, and
+                    the library's Kconfig fragment, from zephyr.conf, to
+                    EXTRA_CONF_FILE. And any group of the library's CMake
+                    lines whose place is the application's: above
+                    find_package(Zephyr), or at the end
     prj.conf        sets the library's symbol, and the ones it needs. Any
                     other Kconfig file of the application can take it instead,
                     a board's own in boards/ for one, as the user chooses
@@ -34,7 +36,8 @@ from ..core.files import backup
 from ..core.installer import installed_libraries
 from ..core.manifest import LIBRARY
 from ..core.target import ALREADY, CHANGED, MANUAL, Outcome
-from .module import cmake_quote, groups
+from ..core.titles import annotated, titled
+from .module import cmake_quote, fragment_name, groups
 
 CMAKELISTS = "CMakeLists.txt"
 PRJ_CONF = "prj.conf"
@@ -49,6 +52,12 @@ MARK_CLOSE = "# <<< lib-installer: {name} <<<"
 # zephyr.py's, here to keep the two modules apart.
 BEFORE_ZEPHYR = "before-zephyr"
 AFTER_ZEPHYR = "after-zephyr"
+
+# The label of the block that adds the library's Kconfig fragment to
+# EXTRA_CONF_FILE: what it adds, Zephyr's Kconfig fragment of the library's. A
+# group's label has no dot, so no group takes it, and blocks.labels(), which
+# finds the groups, passes it by.
+FRAGMENT_LABEL = "zephyr.conf"
 
 # The line Zephyr's build starts at. CMake commands ignore case, and only a
 # line that starts with it counts, so a commented out one does not.
@@ -242,8 +251,9 @@ def cmake_block(library, destination, project_root, newline="\n"):
 
 def integrate_cmake(project_root, library, destination):
     """
-    Add the library's folder to ZEPHYR_EXTRA_MODULES, and write its groups of
-    CMake lines whose place is the application's. Returns an Outcome.
+    Add the library's folder to ZEPHYR_EXTRA_MODULES and its Kconfig fragment
+    to EXTRA_CONF_FILE, and write its groups of CMake lines whose place is the
+    application's. Returns an Outcome.
     """
     path = find_cmakelists(project_root)
     name = library.name
@@ -254,7 +264,8 @@ def integrate_cmake(project_root, library, destination):
             CMAKELISTS, MANUAL,
             "No CMakeLists.txt with find_package(Zephyr) here, so the library was not added to the build.",
             ["Add this to your application's CMakeLists.txt, above find_package(Zephyr):"]
-            + cmake_block(library, destination, project_root).splitlines(),
+            + cmake_block(library, destination, project_root).splitlines()
+            + fragment_lines(library, destination, project_root),
         )
 
     text = read(path)
@@ -290,6 +301,14 @@ def integrate_cmake(project_root, library, destination):
         first = FIND_ZEPHYR.search(rest).start()
         updated = rest[:first] + block + newline + newline + rest[first:]
 
+    # The fragment's block before the groups, so each group placed above
+    # find_package(Zephyr) lands below it, as it did the last time.
+    fragment = fragment_lines(library, destination, project_root)
+    updated = _with_fragment(updated, library, fragment, newline)
+
+    if updated is False:
+        return _half_written(CMAKELISTS, name, "\n".join(fragment))
+
     folder = library_folder(destination, project_root)
     updated = _with_groups(updated, library, ours, newline, folder)
 
@@ -298,11 +317,58 @@ def integrate_cmake(project_root, library, destination):
             line for group in ours for line in group_lines(library, group, folder)))
 
     outcome = _write_block(path, CMAKELISTS, text, updated, name)
-    markers = [marker(name)] + [marker(name, group.label) for group in ours]
+    markers = [marker(name), marker(name, FRAGMENT_LABEL)] + [marker(name, group.label) for group in ours]
     outcome.blocks = {CMAKELISTS: blocks.fingerprints(updated, markers)}
     outcome.steps += _edited(project_root, name, CMAKELISTS, markers, text)
 
     return outcome
+
+
+def fragment_lines(library, destination, project_root):
+    """
+    The block that adds the library's Kconfig fragment, zephyr/<name>.conf in
+    its folder, to EXTRA_CONF_FILE, as lines, or [] for a library with no
+    zephyr.library.conf. The file is named from the application's folder, as
+    {library} names the library's folder in a group's lines, and quoted.
+
+    Read with zephyr_get(... MERGE REVERSE), EXTRA_CONF_FILE puts what the
+    application's CMakeLists.txt adds first: the fragment is read after
+    prj.conf, and before a file given with -DEXTRA_CONF_FILE, such as a debug
+    build's, which can still change a line of it.
+    """
+    if not getattr(library.zephyr, "conf", None):
+        return []
+
+    found = marker(library.name, FRAGMENT_LABEL)
+    path = _module_path(Path(destination) / "zephyr" / fragment_name(library), project_root)
+    key = getattr(library.zephyr, "conf_key", "zephyr.library.conf")
+
+    return [
+        found.open,
+        f"# {library.name}'s Kconfig settings, from {key} in its installer.yml,",
+        "# read after prj.conf. Written again on every install.",
+        f"list(APPEND EXTRA_CONF_FILE {path})",
+        found.close,
+    ]
+
+
+def _with_fragment(text, library, lines, newline):
+    """
+    text with the block of the library's Kconfig fragment above
+    find_package(Zephyr), or without it once the library has none. False when
+    it is half written.
+    """
+    found = marker(library.name, FRAGMENT_LABEL)
+
+    if lines:
+        return blocks.place(text, found, lines[1:-1], newline, _above_zephyr)
+
+    span = blocks.span(text, found)
+
+    if span is False:
+        return False
+
+    return blocks.cut(text, span, newline) if span else text
 
 
 def library_folder(destination, project_root):
@@ -376,10 +442,19 @@ def _edited(project_root, name, label, markers, text):
             for found in markers if blocks.edited(recorded, label, found, text)]
 
 
+def project_conf(library):
+    """
+    The settings the library writes into the application's Kconfig file,
+    beside its switch: zephyr.project.conf, or requires.kconfig before 4.0.0.
+    """
+    found = getattr(getattr(library, "zephyr", None), "prj", None)
+
+    return list(found) if found is not None else list(library.requires.kconfig)
+
+
 def wanted(library):
     """Every line the library asks for: (symbol, value, line), its own switch last."""
-    found = [(requirement.symbol, requirement.value, requirement.line)
-             for requirement in library.requires.kconfig]
+    found = [(entry.symbol, entry.value, entry.line) for entry in project_conf(library)]
     symbol = library.zephyr.symbol
 
     return found + [(symbol, "y", f"CONFIG_{symbol}=y")]
@@ -404,16 +479,25 @@ def conf_block(library, project_root, conf, newline="\n"):
     it, so the block shows what the library asked for and why it is not set
     here. Set again here, the line read last would win and quietly undo the
     user's choice.
+
+    Settings listed in groups are written under their titles, each between
+    two lines of stars, a setting's note above it. From 4.0.0 the switch is
+    last, a group of its own under the library's name, after a blank line,
+    with the note zephyr.symbol gives it; before, it is last with neither.
     """
     taken = assigned(project_root, library.name, conf)
-    body = []
 
-    for symbol, _value, line in wanted(library):
+    def written(symbol, line):
         if symbol in taken:
             have, where = taken[symbol]
-            body.append(f"# {line}  (left out: {where} sets CONFIG_{symbol}={have})")
-        else:
-            body.append(line)
+            return f"# {line}  (left out: {where} sets CONFIG_{symbol}={have})"
+
+        return line
+
+    entries = project_conf(library)
+    body = annotated(entries, lambda entry: written(entry.symbol, entry.line))
+    part = library.zephyr
+    switch = written(part.symbol, f"CONFIG_{part.symbol}=y")
 
     lines = [
         MARK_OPEN.format(name=library.name),
@@ -425,7 +509,13 @@ def conf_block(library, project_root, conf, newline="\n"):
         lines.append("# Its settings, as they are unless you set them:")
         lines.extend(f"#   {setting.line}" for setting in library.zephyr.settings)
 
-    lines.extend(body)
+    if getattr(part, "renamed", False):
+        note = getattr(part, "symbol_note", None)
+        lines += [""] + body + ([""] if body else []) + titled(library.name) + ([f"# {note}"] if note else [])
+        lines.append(switch)
+    else:
+        lines += body + [switch]
+
     lines.append(MARK_CLOSE.format(name=library.name))
 
     return newline.join(lines)
@@ -489,7 +579,8 @@ def sysbuild_assigned(text, name):
 def sysbuild_block(library, text, newline="\n"):
     """
     The lines this tool owns in sysbuild.conf. A symbol the user sets outside
-    it is written commented out, with what the user set, as in conf_block.
+    it is written commented out, with what the user set, as in conf_block, and
+    settings listed in groups under their titles, as there.
     """
     taken = sysbuild_assigned(text, library.name)
     found = marker(library.name)
@@ -499,13 +590,20 @@ def sysbuild_block(library, text, newline="\n"):
         f"# {library.name}'s sysbuild settings below this block rather than in it.",
     ]
 
-    for setting in library.zephyr.sysbuild:
+    def written(setting):
         if setting.symbol in taken:
-            lines.append(f"# {setting.line}  (left out: {SYSBUILD_CONF} sets "
-                         f"SB_CONFIG_{setting.symbol}={taken[setting.symbol]})")
-        else:
-            lines.append(setting.line)
+            return (f"# {setting.line}  (left out: {SYSBUILD_CONF} sets "
+                    f"SB_CONFIG_{setting.symbol}={taken[setting.symbol]})")
 
+        return setting.line
+
+    entries = library.zephyr.sysbuild
+    body = annotated(entries, written)
+
+    if any(getattr(entry, "group", None) for entry in entries):
+        lines.append("")
+
+    lines.extend(body)
     lines.append(found.close)
 
     return newline.join(lines)
@@ -572,7 +670,8 @@ def integrate(project_root, library, destination, conf):
 def _cut_block(path, label, name):
     """
     Take this library's blocks out of one file, with the blank line each
-    brought: its own, and in CMakeLists.txt every group of its CMake lines.
+    brought: its own, and in CMakeLists.txt the one of its Kconfig fragment
+    and every group of its CMake lines.
 
     Returns an Outcome, ALREADY when the file has no block of it.
     """
@@ -583,8 +682,10 @@ def _cut_block(path, label, name):
 
     newline = line_ending(text)
     updated = text
+    markers = [marker(name), marker(name, FRAGMENT_LABEL)]
+    markers += [marker(name, group) for group in blocks.labels(text, INSTALLER, name)]
 
-    for found in [marker(name)] + [marker(name, group) for group in blocks.labels(text, INSTALLER, name)]:
+    for found in markers:
         span = blocks.span(updated, found)
 
         if span is False:

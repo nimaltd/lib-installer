@@ -12,7 +12,7 @@ each platform is, is in stm32/, zephyr/, esp32/, arduino/ and pio/.
 See https://github.com/nimaltd/lib-installer
 """
 
-__version__ = "3.0.1"
+__version__ = "4.0.0"
 
 from .core.installer import InstallError, Result, install_in_place, install_to  # noqa: E402
 from .core.manifest import Manifest, ManifestError, load  # noqa: E402

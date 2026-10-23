@@ -136,6 +136,31 @@ def test_a_quote_inside_a_word_is_a_plain_character(text):
     assert yamlreader.loads(text) == pyyaml.safe_load(text)
 
 
+@pytest.mark.parametrize("text", [
+    "conf:\n  gble's channel:\n    - BT_NUS\n",
+    "conf:\n  'quoted: title':\n    - BT\n  \"double: quoted\":\n    - BT_NUS\n",
+    "conf:\n  - LOG=n: no messages, and nowhere to send them\n  - BOOT_BANNER=n: Zephyr's banner\n  - PRINTK=n\n",
+    "conf:\n  The product's gapp.c, gble's weak ones:\n    - BT_DEVICE_NAME=\"gcore\": its name\n",
+])
+def test_titles_and_notes_are_read_as_pyyaml_reads_them(text):
+    """A group's title is a key, a quote inside it a plain character, and a note a mapping of one."""
+    assert yamlreader.loads(text) == pyyaml.safe_load(text)
+
+
+@pytest.mark.parametrize("text", [
+    "a: 1\na: 2\n",
+    "conf:\n  Bluetooth:\n    - BT\n  Bluetooth:\n    - BT_NUS\n",
+    "list:\n  - name: x\n    name: y\n",
+])
+def test_a_key_given_twice_is_refused_by_both_readers(text):
+    """PyYAML would keep the last of two without a word, and half of the settings would be gone unseen."""
+    with pytest.raises(yamlreader.YamlError, match="given twice"):
+        yamlreader.loads(text)
+
+    with pytest.raises(yamlreader.YamlError, match="given twice"):
+        yamlreader.parse(text)
+
+
 def test_an_empty_document_is_none():
     assert yamlreader.loads("# only a comment\n\n") is None
 

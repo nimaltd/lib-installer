@@ -13,9 +13,26 @@ import re
 from pathlib import Path
 
 from . import component, project
-from ..core import blocks, installer
-from ..core.manifest import ManifestError
+from ..core import blocks, installer, titles
+from ..core.manifest import ManifestError, asks_for, count_of, section_keys, unknown_warnings
 from ..core.target import CHANGED, INFO, MANUAL, OK, WARN, Finding, Outcome, Platform
+
+# The release from which the esp32 section gives every line it writes under
+# where it goes: project, the project's own files, and library, the
+# component's own folder, each list in groups under their titles when it
+# likes. A manifest asking for less keeps the meanings it was written for,
+# and one asking for it stops an installer from before, which would read the
+# keys the old way.
+RENAMED = (4, 0, 0)
+
+# The keys of the esp32 section of a manifest asking for 4.0.0, and of its two
+# parts: what each writes, and into which file.
+KEYS = ("settings", "project", "library")
+PROJECT_KEYS = ("conf", "cmake")
+LIBRARY_KEYS = ("requires", "cmake")
+
+# The keys of the esp32 section of a manifest asking for less.
+BEFORE_KEYS = ("settings", "requires", "cmake")
 
 # A Kconfig symbol as ESP-IDF writes them, without CONFIG_ in front.
 SYMBOL = re.compile(r"^[A-Z0-9_]+$")
@@ -65,16 +82,23 @@ def _symbol(text, where):
 
 
 class Requirement:
-    """A symbol the project has to have, and the value it needs: CONFIG_FREERTOS_HZ=1000."""
+    """
+    A symbol the project has to have, and the value it needs:
+    CONFIG_FREERTOS_HZ=1000, in sdkconfig.defaults. From requires.kconfig, or
+    esp32.project.conf from 4.0.0, which key names.
+    """
 
-    def __init__(self, text):
+    def __init__(self, text, key="requires.kconfig"):
         name, _, value = str(text).partition("=")
-        self.symbol = _symbol(name, "requires.kconfig")
+        self.symbol = _symbol(name, key)
         self.value = value.strip() or "y"
+        # The title of the group it is listed in, and its note, from 4.0.0.
+        self.group = None
+        self.note = None
 
         if not VALUE.match(self.value):
             raise ManifestError(
-                f"requires.kconfig has {text!r}. Give a symbol, which is set to y, or "
+                f"{key} has {text!r}. Give a symbol, which is set to y, or "
                 'SYMBOL=value, with y, n, a number, 0x and a hex number, or "text".'
             )
 
@@ -93,7 +117,7 @@ class Peripheral:
     def __init__(self, data):
         data = data if isinstance(data, dict) else {"type": data}
         self.type = str(data.get("type", "")).lower()
-        self.count = int(data.get("count", 1))
+        self.count = count_of(data.get("count", 1), f"requires.peripherals {self.type}")
         self.note = str(data.get("note", "") or "")
 
     def describe(self):
@@ -200,38 +224,95 @@ class Setting:
         return f"Setting({self.line})"
 
 
-class Esp32Part:
-    """The esp32 section of installer.yml, with what it leaves out filled in."""
+def _components(value, key):
+    """
+    The ESP-IDF components the library's code uses, such as esp_timer, as key
+    lists them, each once. They go into REQUIRES of its component, which is
+    how ESP-IDF puts their headers on the library's include path.
+    """
+    value = value or []
 
-    def __init__(self, data, rooted=False):
+    if not isinstance(value, list):
+        raise ManifestError(f"{key} is a list of ESP-IDF components, such as [esp_timer].")
+
+    found = []
+
+    for entry in value:
+        if isinstance(entry, dict):
+            raise ManifestError(
+                f"{key} has {entry!r}. It is a plain list of ESP-IDF components, such as [esp_timer], "
+                "with no titles or notes."
+            )
+
+        name = str(entry).strip()
+
+        if not COMPONENT.match(name):
+            raise ManifestError(
+                f"{key} has {entry!r}. Write an ESP-IDF component by its name, "
+                "such as esp_timer or esp_driver_i2c."
+            )
+
+        if name not in found:
+            found.append(name)
+
+    return found
+
+
+def _refuse_moved(data):
+    """
+    In a manifest asking for 4.0.0, the keys of the esp32 section from before,
+    each refused with where it went.
+    """
+    moved = {
+        "requires": "esp32.library.requires from 4.0.0: the ESP-IDF components the library's code uses. List "
+                    "them there, under library and then requires.",
+        "cmake": "esp32.project.cmake and esp32.library.cmake from 4.0.0: the lines of the project's "
+                 "CMakeLists.txt under project, by their place, before-project or after-project, and those of "
+                 "the component's own under library.",
+    }
+
+    for key, where in moved.items():
+        if key in data:
+            raise ManifestError(f"esp32.{key} is {where}")
+
+
+def _refuse_new(data):
+    """
+    In a manifest asking for less than 4.0.0, the keys of the esp32 section new
+    in it, refused: an installer from before would not read them, and would
+    install the library without what they say.
+    """
+    for key in ("project", "library"):
+        if key in data:
+            raise ManifestError(f"esp32.{key} is new in 4.0.0: ask for it under requires, as lib_installer: 4.0.0.")
+
+
+class Esp32Part:
+    """
+    The esp32 section of installer.yml, with what it leaves out filled in.
+    renamed is whether the manifest asks for 4.0.0, whose esp32 section lists
+    what it writes under where it goes: project, the project's own files, and
+    library, the component's own folder, each list in groups under their
+    titles when it likes.
+    """
+
+    def __init__(self, library, data, renamed=False):
         if data is None:
             data = {}
 
         if not isinstance(data, dict):
-            raise ManifestError("esp32 should hold requires, cmake and settings.")
+            raise ManifestError("esp32 should hold settings, project and library." if renamed
+                                else "esp32 should hold requires, cmake and settings.")
 
-        # The ESP-IDF components the library's code uses, such as esp_timer.
-        # They go into REQUIRES of its component, which is how ESP-IDF puts
-        # their headers on the library's include path.
-        requires = data.get("requires") or []
+        # The keys of the release the manifest asks for. A key written as the
+        # other release has it is refused with the name to use, rather than
+        # read wrongly.
+        if renamed:
+            _refuse_moved(data)
+        else:
+            _refuse_new(data)
 
-        if not isinstance(requires, list):
-            raise ManifestError("esp32.requires is a list of ESP-IDF components, such as [esp_timer].")
-
-        self.requires = []
-
-        for entry in requires:
-            name = str(entry).strip()
-
-            if not COMPONENT.match(name):
-                raise ManifestError(
-                    f"esp32.requires has {entry!r}. Write an ESP-IDF component by its name, "
-                    "such as esp_timer or esp_driver_i2c."
-                )
-
-            if name not in self.requires:
-                self.requires.append(name)
-
+        self.renamed = renamed
         settings = data.get("settings") or []
 
         if not isinstance(settings, list):
@@ -244,13 +325,61 @@ class Esp32Part:
         if twice:
             raise ManifestError(f"esp32.settings has {', '.join(twice)} more than once.")
 
+        if renamed:
+            self._read_parts(library, data)
+        else:
+            self._read_before(library, data)
+
+    def _read_parts(self, library, data):
+        """
+        What a manifest asking for 4.0.0 writes, by where it goes: under
+        project, into the project's sdkconfig.defaults and CMakeLists.txt, each
+        in a block of the library's; under library, into its component's
+        REQUIRES and CMakeLists.txt.
+        """
+        project = titles.part(data.get("project"), "esp32.project", PROJECT_KEYS)
+        own = titles.part(data.get("library"), "esp32.library", LIBRARY_KEYS)
+
+        # The symbols it sets in the project's sdkconfig.defaults. One given
+        # twice is refused: the line read last would quietly undo the first.
+        self.conf_key = "esp32.project.conf"
+        self.conf = titles.listed(project.get("conf"), self.conf_key, lambda text: Requirement(text, self.conf_key))
+        symbols = [entry.symbol for entry in self.conf]
+        twice = sorted({name for name in symbols if symbols.count(name) > 1})
+
+        if twice:
+            raise ManifestError(f"{self.conf_key} has {', '.join(twice)} more than once.")
+
+        self.requires = _components(own.get("requires"), "esp32.library.requires")
+
+        # Lines of CMake: the project's, under before-project, above
+        # include(project.cmake), and after-project, at its end; and the
+        # component's own, after idf_component_register().
+        self.cmake = titles.cmake_groups(project.get("cmake"), own.get("cmake"), "esp32",
+                                         (BEFORE_PROJECT, AFTER_PROJECT), COMPONENT_PLACE)
+
+        # From 4.0.0 each platform's settings are in its own section, so
+        # requires.kconfig, which every platform read, is refused.
+        if getattr(library.requires, "kconfig", None):
+            raise ManifestError(
+                "requires.kconfig is esp32.project.conf from 4.0.0: the symbols a library sets in the project's "
+                "sdkconfig.defaults. List them there, under project and then conf."
+            )
+
+    def _read_before(self, library, data):
+        """What a manifest asking for less than 4.0.0 writes, read the way it was written for."""
+        self.conf_key = "requires.kconfig"
+        self.conf = list(getattr(library.requires, "kconfig", []))
+        self.requires = _components(data.get("requires"), "esp32.requires")
+
         # Lines of CMake the library needs beyond its files, by the place they
         # go, from 2.1.0: component, the component's CMakeLists.txt, after
         # idf_component_register(), or before-project and after-project, the
         # project's, above include(project.cmake) or at its end. Before,
         # labelled groups each with a where; and a plain list of lines, the
         # form from before 2.0.0: one group, in the component.
-        self.cmake = blocks.groups(data.get("cmake"), "esp32.cmake", PLACES, COMPONENT_PLACE, rooted=rooted)
+        self.cmake = blocks.groups(data.get("cmake"), "esp32.cmake", PLACES, COMPONENT_PLACE,
+                                   rooted=getattr(library, "rooted", False))
 
 
 def idf_components(name):
@@ -301,7 +430,16 @@ class Esp32(Platform):
         return [self.record_name, project.CMAKELISTS, project.MAIN, project.SDKCONFIG, project.DEFAULTS]
 
     def read_manifest(self, manifest, data):
-        manifest.esp32 = Esp32Part(data.get("esp32"), rooted=getattr(manifest, "rooted", False))
+        renamed = asks_for(data, RENAMED)
+        manifest.esp32 = Esp32Part(manifest, data.get("esp32"), renamed)
+        # A key the section does not have, such as a misspelt settings, which
+        # would take what it says with it unseen.
+        manifest.esp32.unknown = section_keys(data, "esp32", KEYS if renamed else BEFORE_KEYS)
+
+        # Each option's own groups of CMake lines, read now that the release
+        # the manifest asks for, which says where they are, is known.
+        for option in manifest.options.values():
+            option.esp32_cmake = titles.option_cmake(option, "esp32", renamed, PLACES, COMPONENT_PLACE)
 
         # A label names one group, among the library's and all its options'.
         labels = [group.label for group in manifest.esp32.cmake]
@@ -316,15 +454,19 @@ class Esp32(Platform):
                                 "options' groups counted. Give each its own label.")
 
     def read_option(self, option, data):
-        """An option's own groups of CMake lines, written while it is taken."""
+        """
+        An option's own esp32 part, kept for read_manifest(): its groups of
+        CMake lines, written while it is taken, are where the release the
+        manifest asks for says, which is known once the whole manifest is read.
+        """
         part = data.get("esp32") if isinstance(data, dict) else None
 
         if part is not None and not isinstance(part, dict):
-            raise ManifestError(f"options.{option.name}.esp32 should hold cmake.")
+            raise ManifestError(f"options.{option.name}.esp32 should hold cmake, or project and library "
+                                "from 4.0.0.")
 
-        option.esp32_cmake = blocks.groups((part or {}).get("cmake"), f"options.{option.name}.esp32.cmake",
-                                           PLACES, COMPONENT_PLACE, legacy=False, prefix=option.name,
-                                           rooted=getattr(option, "rooted", False))
+        option.esp32_part = part or {}
+        option.esp32_cmake = []
 
     def read_requirements(self, requirements, data):
         """The ESP-IDF part of requires: Kconfig symbols, and hardware."""
@@ -352,7 +494,7 @@ class Esp32(Platform):
             if not setting.prompt_given:
                 found.append(f"esp32.settings {setting.name} has no prompt, so menuconfig shows only its name")
 
-        return found
+        return found + unknown_warnings("esp32", getattr(part, "unknown", []))
 
     def _folder(self, library, project_root):
         """The library's folder: the one it is in already, or the one it is offered."""
@@ -384,7 +526,7 @@ class Esp32(Platform):
                 f"Install it into a folder of another name, such as --dir components/{name}_lib.",
             ))
 
-        if library.requires.kconfig and project.names_its_defaults(project_root):
+        if library.esp32.conf and project.names_its_defaults(project_root):
             findings.append(Finding(
                 WARN, "This project sets SDKCONFIG_DEFAULTS, so ESP-IDF may not read sdkconfig.defaults",
                 f"Keep {project.DEFAULTS} in that list, or set the lines below in one of yours.",

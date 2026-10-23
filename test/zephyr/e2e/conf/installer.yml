@@ -1,0 +1,39 @@
+# A third library made only for the tests, with what 4.0.0 brings to the
+# zephyr section: the library's switch under symbol, and what it writes under
+# where it goes, project, the application's files, or library, its own folder,
+# here in groups under their titles, one setting with a note. The
+# application's main.c stops the build without the switch or the project's
+# setting, and prints what the library's two settings came to, which CI looks
+# for in its output.
+
+name: conf
+description: What a 4.0.0 manifest brings, in a real Zephyr build
+repository: https://github.com/nimaltd/lib-installer
+
+platform: zephyr
+
+# 4.0.0, which the zephyr section below needs: asked for less, symbol,
+# project and library are refused.
+requires:
+  lib_installer: 4.0.0
+
+headers:
+  - src/conf.h
+sources:
+  - src/conf.c
+
+zephyr:
+  symbol: CONF_SWITCH              # not CONF, the name in capitals, so the build shows it was read
+
+  project:
+    conf:                          # in conf's block in prj.conf, beside CONF_SWITCH
+      A quiet boot:
+        - BOOT_BANNER=n: no banner before main() prints
+
+  library:
+    kconfig:                       # a default while CONF_SWITCH is on, over Zephyr's own 0
+      A heap for k_malloc:
+        - HEAP_MEM_POOL_SIZE=2048
+    conf:                          # in zephyr/conf.conf, read after prj.conf, which sets 12
+      Priorities for every build:
+        - NUM_PREEMPT_PRIORITIES=20: over the 12 of prj.conf, which Zephyr reads first

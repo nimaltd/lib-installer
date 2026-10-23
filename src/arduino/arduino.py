@@ -23,11 +23,14 @@ from pathlib import Path
 from . import properties, sketchbook
 from ..core import console, installer
 from ..core.installer import InstallError
-from ..core.manifest import ManifestError
+from ..core.manifest import ManifestError, section_keys, unknown_warnings
 from ..core.target import ALREADY, INFO, OK, WARN, Finding, Outcome, Platform
 
 LIBRARIES = "libraries"
 SKETCH = "sketch"
+
+# The keys of the arduino section.
+KEYS = ("architectures", "category", "author", "maintainer", "depends")
 
 # An architecture as boards name it in library.properties: avr, esp32,
 # mbed_nano, or * for any.
@@ -264,6 +267,11 @@ class Arduino(Platform):
 
     def read_manifest(self, manifest, data):
         manifest.arduino = ArduinoPart(data.get("arduino"))
+        # A key the section does not have, such as a misspelt architectures.
+        manifest.arduino.unknown = section_keys(data, "arduino", KEYS)
+
+    def warnings(self, manifest):
+        return unknown_warnings("arduino", getattr(getattr(manifest, "arduino", None), "unknown", []))
 
     def read_requirements(self, requirements, data):
         """Hardware the library uses, named to the user: I2C, or I2C, 400 kHz."""

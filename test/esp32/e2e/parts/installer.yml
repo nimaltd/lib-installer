@@ -1,0 +1,49 @@
+# A fourth library made only for the tests, with what 4.0.0 brings: every
+# line under where it goes, project for the project's own files and library
+# for its component, in groups under their titles, and a symbol with a note.
+# parts.c and the application's main.c check each reached the build: a piece
+# that did not arrive stops it.
+
+name: parts
+description: What a 4.0.0 manifest brings, in a real ESP-IDF build
+repository: https://github.com/nimaltd/lib-installer
+license: Apache-2.0
+
+# Named, so the run needs no --platform, though demo and extra name none.
+platform: esp32
+
+requires:
+  lib_installer: 4.0.0
+
+headers:
+  - src/parts.h
+sources:
+  - src/parts.c
+
+esp32:
+  settings:
+    - name: PARTS_BASE
+      type: int
+      default: 1
+      range: [0, 100]
+      prompt: What parts_answer() adds two to, 20 from sdkconfig.defaults
+  project:
+    # Into parts' block of the project's sdkconfig.defaults, under its title,
+    # the note above its line: 20 wins over the setting's default of 1.
+    conf:
+      Its answer:
+        - PARTS_BASE=20: set here, where the project sees it
+    # At the end of the project's CMakeLists.txt, where main's library exists.
+    cmake:
+      after-project:
+        Checked by main.c:
+          - idf_component_get_property(parts_main main COMPONENT_LIB)
+          - target_compile_definitions(${parts_main} PRIVATE PARTS_AFTER)
+  library:
+    # The component's REQUIRES: parts.c includes esp_timer.h, which nothing
+    # else puts on its include path.
+    requires: [esp_timer]
+    # And its own CMakeLists.txt, after idf_component_register().
+    cmake:
+      Checked by parts.c:
+        - target_compile_definitions(${COMPONENT_LIB} PRIVATE PARTS_OWN)

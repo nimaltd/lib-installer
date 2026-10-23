@@ -1,7 +1,8 @@
 /*
  * The application the tests install the demo libraries into, then build and
  * run. It prints what each library answers, and the name set in demo's
- * Kconfig, and stops the build when anything 2.0.0 brings did not arrive.
+ * Kconfig, and stops the build when anything 2.0.0 or 4.0.0 brings did not
+ * arrive.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,6 +11,7 @@
 #include <zephyr/sys/printk.h>
 #include <app_version.h>
 
+#include "conf.h"
 #include "demo.h"
 #include "extra.h"
 
@@ -35,10 +37,22 @@
 #error "extra.conf, added by extra's before-zephyr group, was not read"
 #endif
 
+/* conf's switch, named by zephyr.symbol in its installer.yml. Without that
+   key it would be CONFIG_CONF, the library's name in capitals. */
+#ifndef CONFIG_CONF_SWITCH
+#error "CONFIG_CONF_SWITCH, named by conf's zephyr.symbol, did not reach the application"
+#endif
+
+/* BOOT_BANNER=n, from conf's zephyr.project.conf, in its block in prj.conf. */
+#ifdef CONFIG_BOOT_BANNER
+#error "BOOT_BANNER=n from conf's zephyr.project.conf did not reach the application"
+#endif
+
 int main(void)
 {
     printk("%s says %d\n", CONFIG_DEMO_NAME, demo_answer());
     printk("extra says %d, version %s\n", extra_answer(), APP_VERSION_STRING);
+    printk("conf says %d, heap %d\n", conf_answer(), CONFIG_HEAP_MEM_POOL_SIZE);
 
     return 0;
 }

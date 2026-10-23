@@ -1,18 +1,24 @@
 """
-platformio.ini: the defines a library gives the whole project.
+platformio.ini: the defines and the build flags a library gives the whole project.
 
 A define in a library's library.json reaches only the library's own files, as
 measured: the project's own code, which includes the library's header, never
 sees it. A define can change what that header declares, and every file that
 includes it has to agree, so a library's install.defines go into platformio.ini
-instead, where PlatformIO hands build_flags to every file of the build.
-
-Each library's defines are a marked block inside build_flags:
+instead, where PlatformIO hands build_flags to every file of the build. So do
+the flags of pio.project.build_flags, from 4.0.0, after the defines, each group
+under its title between two lines of stars, and a flag's note above it, as
+comments of the file's, ; like the markers:
 
     build_flags =
         -DFROM_YOU=1
         ; >>> lib-installer: example >>>
         -DEXAMPLE_FAST
+        ; ******************************************************************************
+        ; Printing
+        ; ******************************************************************************
+        ; printf("%f") prints nothing without it
+        -Wl,-u,_printf_float
         ; <<< lib-installer: example <<<
 
 A block goes wherever build_flags reaches an environment: into [env], which
@@ -33,6 +39,7 @@ from pathlib import Path
 from ..core import blocks
 from ..core.files import backup
 from ..core.target import ALREADY, CHANGED, MANUAL, Outcome
+from ..core.titles import annotated
 
 NAME = "platformio.ini"
 
@@ -121,10 +128,42 @@ def environments(text):
             for env, (framework, platform) in found.items()}
 
 
-def _block(name, defines, indent):
+def flag_lines(library):
+    """
+    The library's build flags, from pio.project.build_flags, as lines of its
+    block: each group's title between two lines of stars, and a flag's note
+    above it, as comments. No blank line, though: in an ini file one reads as
+    the end of the value, to a person and to many a tool, if not to PlatformIO.
+    """
+    part = getattr(library, "pio", None)
+
+    return annotated(getattr(part, "build_flags", []), lambda flag: flag.text, sign=";", blank=False)
+
+
+def _what(defines, flags):
+    """What a block holds, in words: the defines, the build flags, or both."""
+    if defines and flags:
+        return "defines and build flags"
+
+    return "build flags" if flags else "defines"
+
+
+def _held(text, name):
+    """What this library's blocks in text hold, in words, read from their lines."""
+    lines = []
+
+    for start, end in blocks.spans(text, marker(name)) or []:
+        lines += [line.strip() for line in text[start:end].splitlines()[1:-1]]
+
+    return _what([line for line in lines if line.startswith("-D")],
+                 [line for line in lines if line and not line.startswith(("-D", ";"))])
+
+
+def _block(name, defines, indent, flags=()):
     found = marker(name)
     lines = [indent + found.open]
     lines += [f"{indent}-D{define}" for define in defines]
+    lines += [indent + line for line in flags]
     lines.append(indent + found.close)
 
     return lines
@@ -186,8 +225,11 @@ def without(lines, name):
     return kept
 
 
-def with_block(lines, name, defines):
-    """The lines with this library's defines added wherever build_flags reaches an environment."""
+def with_block(lines, name, defines, extra=()):
+    """
+    The lines with this library's defines, and the lines of its build flags,
+    extra, added wherever build_flags reaches an environment.
+    """
     found = sections(lines)
     common = next((s for s in found if s[0] == "env"), None)
     envs = [s for s in found if s[0].startswith("env:")]
@@ -197,20 +239,20 @@ def with_block(lines, name, defines):
         span = flags(lines, start, end)
 
         if span:
-            inserts.append((span[1] + 1, _block(name, defines, _indent(lines, *span))))
+            inserts.append((span[1] + 1, _block(name, defines, _indent(lines, *span), extra)))
 
     if common is not None:
         _section, start, end = common
         span = flags(lines, start, end)
 
         if span:
-            inserts.append((span[1] + 1, _block(name, defines, _indent(lines, *span))))
+            inserts.append((span[1] + 1, _block(name, defines, _indent(lines, *span), extra)))
         else:
             last = max([start] + [i for i in range(start + 1, end) if lines[i].strip()])
-            inserts.append((last + 1, ["build_flags ="] + _block(name, defines, INDENT)))
+            inserts.append((last + 1, ["build_flags ="] + _block(name, defines, INDENT, extra)))
     elif any(flags(lines, start, end) is None for _section, start, end in envs):
         first = envs[0][1]
-        inserts.append((first, ["[env]", "build_flags ="] + _block(name, defines, INDENT) + [""]))
+        inserts.append((first, ["[env]", "build_flags ="] + _block(name, defines, INDENT, extra) + [""]))
 
     for index, added in sorted(inserts, key=lambda item: item[0], reverse=True):
         lines[index:index] = added
@@ -225,50 +267,69 @@ def _split(text):
     return newline, lines
 
 
-def updated(text, name, defines):
-    """The file's text with this library's defines, or none of them when it has none."""
+def updated(text, name, defines, extra=()):
+    """
+    The file's text with this library's defines and the lines of its build
+    flags, extra, or none of them when it has none.
+    """
     newline, lines = _split(text)
     lines = without(lines, name)
 
-    if defines:
-        lines = with_block(lines, name, defines)
+    if defines or extra:
+        lines = with_block(lines, name, defines, extra)
 
     return newline.join(lines)
 
 
+def _by_hand(library):
+    """The flags to add by hand when the file cannot be written: its defines, then its build flags."""
+    part = getattr(library, "pio", None)
+
+    return [f"-D{define}" for define in library.defines] + [flag.text for flag in getattr(part, "build_flags", [])]
+
+
 def integrate(project_root, library):
-    """Give the project the library's defines. Returns an Outcome, or None when there is nothing to do."""
+    """
+    Give the project the library's defines and build flags. Returns an
+    Outcome, or None when there is nothing to do.
+    """
     path = Path(project_root) / NAME
+    extra = flag_lines(library)
+    wanted = bool(library.defines or extra)
+    what = _what(library.defines, extra)
 
     try:
         text = read(path)
     except (OSError, UnicodeDecodeError) as error:
-        if not library.defines:
+        if not wanted:
             return None
 
         return Outcome(NAME, MANUAL, f"Could not read {NAME}: {error}",
-                       ["Add these to build_flags of every environment:"]
-                       + [f"-D{define}" for define in library.defines])
+                       ["Add these to build_flags of every environment:"] + _by_hand(library))
 
     # A block with one of its markers missing: whatever was written could
     # take the user's lines with it, so the file is left as it is.
     if blocks.spans(text, marker(library.name)) is False:
         return _half_written(library)
 
-    new = updated(text, library.name, library.defines)
-    found = {NAME: blocks.fingerprints(new, [marker(library.name)])} if library.defines else {}
+    new = updated(text, library.name, library.defines, extra)
+    found = {NAME: blocks.fingerprints(new, [marker(library.name)])} if wanted else {}
 
     if new == text:
-        if not library.defines:
+        if not wanted:
             return None
 
-        return Outcome(NAME, ALREADY, f"{NAME} already has {library.name}'s defines.", blocks=found)
+        return Outcome(NAME, ALREADY, f"{NAME} already has {library.name}'s {what}.", blocks=found)
 
     saved = backup(path)
     write(path, new)
-    what = f"Added {library.name}'s defines to" if library.defines else f"Took {library.name}'s old defines out of"
 
-    return Outcome(NAME, CHANGED, f"{what} {NAME}, for every environment.", backup=saved, blocks=found)
+    if wanted:
+        done = f"Added {library.name}'s {what} to {NAME}, for every environment."
+    else:
+        done = f"Took {library.name}'s old {_held(text, library.name)} out of {NAME}."
+
+    return Outcome(NAME, CHANGED, done, backup=saved, blocks=found)
 
 
 def _half_written(library):
@@ -276,12 +337,12 @@ def _half_written(library):
     return Outcome(
         NAME, MANUAL,
         f"{NAME} has a half written lib-installer block for {library.name}. Fix it by hand first.",
-        ["Then add these to build_flags of every environment:"] + [f"-D{define}" for define in library.defines],
+        ["Then add these to build_flags of every environment:"] + _by_hand(library),
     )
 
 
 def uninstall(project_root, name):
-    """Take this library's defines out of platformio.ini. An Outcome, or None."""
+    """Take this library's defines and build flags out of platformio.ini. An Outcome, or None."""
     path = Path(project_root) / NAME
 
     try:
@@ -301,4 +362,4 @@ def uninstall(project_root, name):
     saved = backup(path)
     write(path, new)
 
-    return Outcome(NAME, CHANGED, f"Removed {name}'s defines from {NAME}.", backup=saved)
+    return Outcome(NAME, CHANGED, f"Removed {name}'s {_held(text, name)} from {NAME}.", backup=saved)

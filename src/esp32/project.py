@@ -37,6 +37,7 @@ from ..core.files import backup
 from ..core.installer import installed_libraries
 from ..core.manifest import LIBRARY
 from ..core.target import ALREADY, CHANGED, MANUAL, Outcome
+from ..core.titles import annotated, grouped
 
 CMAKELISTS = "CMakeLists.txt"
 DEFAULTS = "sdkconfig.defaults"
@@ -66,6 +67,11 @@ PROJECT_CMAKE = re.compile(r"^[ \t]*include[ \t]*\([^)\n]*tools/cmake/project\.c
 
 # A project that names its own defaults files, in place of sdkconfig.defaults.
 NAMES_DEFAULTS = re.compile(r"^[ \t]*set[ \t]*\([ \t]*SDKCONFIG_DEFAULTS\b", re.MULTILINE | re.IGNORECASE)
+
+# A block lib-installer wrote, any library's, from its first marker line to
+# its last, so what is left of a file is the project's own.
+ANY_BLOCK = re.compile(r"^[ \t]*# >>> lib-installer: (\S+) >>>.*?^[ \t]*# <<< lib-installer: \1 <<<[^\n]*\n?",
+                       re.MULTILINE | re.DOTALL)
 
 # A project that builds only the components main needs: MINIMAL_BUILD, which
 # ESP-IDF's own examples set, or a COMPONENTS list. A component nothing names
@@ -116,8 +122,13 @@ def find_project(project_root):
 
 
 def names_its_defaults(project_root):
-    """Whether the project's CMakeLists.txt sets SDKCONFIG_DEFAULTS itself."""
-    return bool(NAMES_DEFAULTS.search(_text(Path(project_root) / CMAKELISTS)))
+    """
+    Whether the project's CMakeLists.txt sets SDKCONFIG_DEFAULTS itself, in a
+    line of its own. A library's block that sets it, as one adding a defaults
+    file of its own does, keeps sdkconfig.defaults in the list, and is not the
+    project's to change, so it is passed by.
+    """
+    return bool(NAMES_DEFAULTS.search(ANY_BLOCK.sub("", _text(Path(project_root) / CMAKELISTS))))
 
 
 def builds_minimal(project_root):
@@ -430,8 +441,11 @@ def _above_project(text):
 # sdkconfig.defaults
 
 def wanted(library):
-    """Every line the library asks for in sdkconfig.defaults: (symbol, value, line)."""
-    return [(requirement.symbol, requirement.value, requirement.line) for requirement in library.requires.kconfig]
+    """
+    Every line the library asks for in sdkconfig.defaults: (symbol, value,
+    line). From esp32.project.conf, or requires.kconfig before 4.0.0.
+    """
+    return [(requirement.symbol, requirement.value, requirement.line) for requirement in library.esp32.conf]
 
 
 def defaults_block(library, project_root, newline="\n"):
@@ -441,22 +455,31 @@ def defaults_block(library, project_root, newline="\n"):
     A symbol the user sets already is written too, commented out with what
     they set, so the block shows what the library asked for and why it is not
     set here.
+
+    Symbols listed in groups are written under their titles, each between two
+    lines of stars, after a blank line below the block's own comment, and a
+    symbol's note above it.
     """
     taken = user_defaults(project_root, library.name)
-    body = []
 
-    for symbol, _value, line in wanted(library):
-        if symbol in taken:
-            body.append(f"# {line}  (left out: {DEFAULTS} sets CONFIG_{symbol}={taken[symbol]})")
-        else:
-            body.append(line)
+    def written(requirement):
+        if requirement.symbol in taken:
+            return (f"# {requirement.line}  (left out: {DEFAULTS} sets "
+                    f"CONFIG_{requirement.symbol}={taken[requirement.symbol]})")
 
+        return requirement.line
+
+    entries = library.esp32.conf
     lines = [
         MARK_OPEN.format(name=library.name),
         "# Added by lib-installer, and written again on every install, so set",
         f"# {library.name}'s symbols below this block rather than in it.",
     ]
-    lines.extend(body)
+
+    if grouped(entries):
+        lines.append("")
+
+    lines.extend(annotated(entries, written))
     lines.append(MARK_CLOSE.format(name=library.name))
 
     return newline.join(lines)

@@ -272,6 +272,8 @@ Leave `version` out. The installer reads the version from the `@version` tag in 
 
 `requires.lib_installer` is the oldest lib-installer that reads the file correctly. It is checked before anything else in the file is read, so an older installer stops with a message saying to update, rather than read the file wrongly. A manifest asking for 3.0.0 names the platforms it works on under `platform`, as the [README](../README.md#which-platform) says. Write it as three numbers, `3.0.0`: unquoted, YAML reads `1.10` as the decimal number `1.1`, and that is refused.
 
+From 4.0.0, a key the `arduino` section does not have, such as `architecture` for `architectures`, is refused, with the keys it holds, where before it was passed by, and what it said with it. A manifest asking for less is told about it in a warning, and installs as it did.
+
 What 2.0.0 brought needs a manifest asking for 2.0.0 or newer: `once` files in the sketch's folder, `run`, or a library it needs given with an `@` or a `manifest`. The version also decides where `once` files go. A manifest asking for 2.0.0 or newer puts them in the sketch's folder, and one asking for less keeps the meaning it was written for, the library's own folder, so a release tagged before 2.0.0 still installs as it did.
 
 ### Paths, from 2.1.0

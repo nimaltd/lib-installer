@@ -57,7 +57,7 @@ When a newer lib-installer is out, the last line of a run says so, with the comm
 A library can need a newer installer than the one you have. It then says so and changes nothing:
 
 ```
-Error: This library needs lib-installer 3.1.0 or newer, and this one is 3.0.1. Nothing was changed.
+Error: This library needs lib-installer 4.1.0 or newer, and this one is 4.0.0. Nothing was changed.
 Update it with:
     pip install --upgrade lib-installer
 ```
@@ -126,6 +126,7 @@ Each command with `owner/example` standing for the library. An update is the ins
 | Leave a step unrun, without the question | `lib-installer owner/example --no-run make-key` |
 | Answer every question with the answer offered, and run every step, for a script | `lib-installer owner/example --yes` |
 | Install from a private repository | `lib-installer owner/example --key github_pat_...` |
+| Give the token once, for every run after | `GITHUB_TOKEN` set to it, see [A private repository](#a-private-repository) |
 | Leave out the check for a newer installer | `lib-installer owner/example --no-update-check` |
 | STM32: register with one IDE only, of `cmake`, `cubeide`, `keil`, `iar` and `makefile` | `lib-installer owner/example --ide cubeide` |
 | Zephyr: choose the Kconfig file the libraries are switched on in | `lib-installer owner/example --conf boards/x.conf` |
@@ -136,6 +137,44 @@ Each command with `owner/example` standing for the library. An update is the ins
 | Uninstall a library | `lib-installer --uninstall example` |
 | Uninstall several, in any order | `lib-installer --uninstall osal example` |
 | Run it when `lib-installer` is not found | `python -m lib_installer owner/example` |
+
+### Every feature
+
+What lib-installer does, and how. The version is the oldest a library's `installer.yml` has to ask for, under `requires.lib_installer`, to use it; with none given, every version does it. The keys of `installer.yml` are under [For someone writing a library](#for-someone-writing-a-library), and those of one platform on its page.
+
+| Feature | How | Since |
+|---|---|---|
+| A library from GitHub, by owner and name, or one release, branch or commit of it | `lib-installer owner/example`, `owner/example@v2.0.0` or `--ref`, see [What to install](#what-to-install) | |
+| A library from a downloaded zip or a folder, without internet | `lib-installer D:/Downloads/example-main.zip`, see [Without internet](#without-internet) | |
+| Several libraries in one run | `lib-installer owner/example owner/other` | |
+| A library in a private repository | `--key`, or `GITHUB_TOKEN`, see [A private repository](#a-private-repository) | |
+| Through a proxy, every file tried again on a bad connection | `HTTPS_PROXY`, see [On a bad connection](#on-a-bad-connection) | |
+| One `installer.yml` for every platform | `platform: [stm32, zephyr, esp32, arduino, pio]`, `--platform`, see [Which platform](#which-platform) | 3.0.0 |
+| A library that does not fit refused before anything is written: another platform, a newer installer, an option of another platform | | |
+| The libraries it needs, installed first, each at a version that will do | `requires.libraries`, with `>=`; with `@` a release of its own, and with `manifest` one for a repository with no `installer.yml`, see [A library that needs another](#a-library-that-needs-another) | `@` and `manifest`: 2.0.0 |
+| Parts of a library the user chooses | `options`, `--with`, `--without`, see [Parts you choose](#parts-you-choose) | |
+| An update that keeps the user's settings | `USER CODE BEGIN` and `END` in the library's files; anything else of the user's saved as a `.bak`, see [Updating a library](#updating-a-library) | |
+| Files that become the project's own, made once and never written over | `once`, see [Files that become yours](#files-that-become-yours) | 2.0.0 |
+| Steps run once the files are in, each asked about first | `run`, `--run`, `--no-run`, `--yes`, see [Steps a library runs](#steps-a-library-runs) | 2.0.0 |
+| Every file at the path it has in the repository; wildcards; paths from the project's folder, `{library}` for the library's | `src/**/*.c`, `to`, `{library}` | 2.1.0 |
+| The library's own files in the project's folder, such as its tools | `extras` with `root` | 2.1.0 |
+| An uninstall that gives the project's files back to the byte | `--uninstall`, see [Uninstalling a library](#uninstalling-a-library) | |
+| A record of what is installed, from where, down to the commit | `.lib-installer.json`, kept with the project | |
+| A project of one of the five installers moved over | by itself, on the first run, see [Moving over](#moving-over-from-the-five-installers) | 3.0.0 |
+| A key given twice in one place refused, where YAML would keep the last without a word | | 4.0.0 |
+| A key a platform's section does not have, such as a misspelt one, refused, with the keys it holds; a manifest asking for less is told about it, and installs as it did | | 4.0.0 |
+| The folders of the include path checked before any project file gets them: inside the library, and nothing an IDE's file would read as more than a path | `install.include_dirs` | |
+| STM32: registered with CMake, STM32CubeIDE, Keil MDK, IAR or CubeMX's Makefile; HAL modules, peripherals and RTOS checked against the project | `--ide`, `requires.hal_modules`, `requires.peripherals`, `requires.rtos`, see [STM32](https://github.com/nimaltd/lib-installer/blob/main/docs/stm32.md) | |
+| Zephyr: a module of the application, switched on in `prj.conf`, its settings in Kconfig and menuconfig | `zephyr.symbol`, `zephyr.settings`, `--conf`, see [Zephyr](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md) | |
+| Zephyr: every line it writes under where it goes, the application's own files or its own folder | `zephyr.project`: `conf`, `sysbuild`, `cmake`; `zephyr.library`: `kconfig`, `conf`, `cmake` | 4.0.0 |
+| Zephyr: lists in groups under their titles, a setting with a note, written into the files as comments | see [Titles and notes](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md#titles-and-notes-from-400) | 4.0.0 |
+| ESP-IDF: a component, its settings in menuconfig, its lines in `sdkconfig.defaults` and in CMake | `esp32.settings`, `esp32.project`, `esp32.library`, see [ESP-IDF](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md) | |
+| ESP-IDF: every line it writes under where it goes, the project's own files or its component | `esp32.project`: `conf`, `cmake`; `esp32.library`: `requires`, `cmake`; before, `requires.kconfig`, `esp32.requires` and `esp32.cmake` | 4.0.0 |
+| ESP-IDF: lists in groups under their titles, a symbol with a note, written into the files as comments | see [Titles and notes](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md#titles-and-notes-from-400) | 4.0.0 |
+| Arduino: into the libraries folder, for every sketch, or into one sketch, with its `library.properties` | `--into`, `--sketchbook`, `arduino`, see [Arduino](https://github.com/nimaltd/lib-installer/blob/main/docs/arduino.md) | |
+| PlatformIO: into `lib/`, with its `library.json`, and its defines in `platformio.ini` | `pio.library`, `install.defines`, see [PlatformIO](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md) | |
+| PlatformIO: flags for every file of the build, in groups under their titles and with notes, as comments of `platformio.ini` | `pio.project.build_flags`, see [Build flags](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md#build-flags) | 4.0.0 |
+| PlatformIO: what goes into `library.json` under `library` | `pio.library`: `frameworks`, `platforms`, `dependencies`; before, right under `pio` | 4.0.0 |
 
 ### On a bad connection
 
@@ -165,10 +204,10 @@ On a machine that has internet, save the installer as a file:
 pip download lib-installer
 ```
 
-That saves one file, such as `lib_installer-3.0.1-py3-none-any.whl`, where the number is the installer's version. Download the library too, from the green **Code** button, **Download ZIP**. Copy both to the machine that has no internet, then from your project:
+That saves one file, such as `lib_installer-4.0.0-py3-none-any.whl`, where the number is the installer's version. Download the library too, from the green **Code** button, **Download ZIP**. Copy both to the machine that has no internet, then from your project:
 
 ```bash
-pip install lib_installer-3.0.1-py3-none-any.whl
+pip install lib_installer-4.0.0-py3-none-any.whl
 lib-installer D:/Downloads/example-main.zip
 ```
 
@@ -464,7 +503,7 @@ Moved over from zephyr-installer to lib-installer: CMakeLists.txt, prj.conf, .li
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone. Releases before 1.9.0 called it `library.yml`, and the installer still reads that name when there is no `installer.yml`.
 
-The keys every platform reads are below, as a manifest asking for 3.0.0 writes them. Only `name`, `platform` and its `headers` or `sources` are required; leave out what your library does not need. The keys of one platform, such as `zephyr:` or `requires.hal_modules`, are on that platform's page, with what it does with the rest: [STM32](https://github.com/nimaltd/lib-installer/blob/main/docs/stm32.md#for-someone-writing-a-library), [Zephyr](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md#for-someone-writing-a-library), [ESP-IDF](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md#for-someone-writing-a-library), [Arduino](https://github.com/nimaltd/lib-installer/blob/main/docs/arduino.md#for-someone-writing-a-library) and [PlatformIO](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md#for-someone-writing-a-library).
+The keys every platform reads are below, as a manifest asking for 4.0.0 writes them. Only `name`, `platform` and its `headers` or `sources` are required; leave out what your library does not need. The keys of one platform, such as `zephyr:` or `requires.hal_modules`, are on that platform's page, with what it does with the rest: [STM32](https://github.com/nimaltd/lib-installer/blob/main/docs/stm32.md#for-someone-writing-a-library), [Zephyr](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md#for-someone-writing-a-library), [ESP-IDF](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md#for-someone-writing-a-library), [Arduino](https://github.com/nimaltd/lib-installer/blob/main/docs/arduino.md#for-someone-writing-a-library) and [PlatformIO](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md#for-someone-writing-a-library).
 
 ```yaml
 name: example                      # the library's name, and its folder in the project
@@ -476,7 +515,7 @@ platform: [stm32, zephyr]          # the platforms it works on: one name, or a l
 version: 1.0.0                     # only when the first header has no @version tag
 
 requires:
-  lib_installer: 3.0.0             # the oldest lib-installer that reads this file
+  lib_installer: 4.0.0             # the oldest lib-installer that reads this file
   libraries:                       # other libraries, installed first when missing
     - osal >= 1.0.0                # no owner means nimaltd; >= the oldest that will do
     - owner/lib@v1.2.0             # a tag, branch or commit, not its default branch
@@ -515,7 +554,7 @@ extras:                            # copied as they are, never compiled
 
 `requires.lib_installer` is the oldest lib-installer that reads the file correctly. It is checked before anything else in the file is read, so when a manifest starts using something only a newer installer understands, raising this makes an older one stop with a message saying to update, rather than read the file wrongly without a word. Write it as three numbers, `3.0.0`: unquoted, YAML reads `1.10` as the decimal number `1.1`, and that is refused.
 
-The keys of the five installers before 3.0.0, `requires.stm32_installer`, `requires.zephyr_installer`, `requires.esp32_installer`, `requires.arduino_installer`, `requires.pio_installer`, and `requires.installer` from before 2.0.0, are still read, so a manifest written for one of them installs as it did. The version a manifest asks for decides how it reads: what 2.0.0 brought, such as `once` files in the project's folder and `run`, needs 2.0.0 or newer, and what 2.1.0 brought, every path starting at the project's folder, needs 2.1.0 or newer. A manifest asking for 3.0.0 reads as one asking for 2.1.0 does, and names its `platform`.
+The keys of the five installers before 3.0.0, `requires.stm32_installer`, `requires.zephyr_installer`, `requires.esp32_installer`, `requires.arduino_installer`, `requires.pio_installer`, and `requires.installer` from before 2.0.0, are still read, so a manifest written for one of them installs as it did. The version a manifest asks for decides how it reads: what 2.0.0 brought, such as `once` files in the project's folder and `run`, needs 2.0.0 or newer, and what 2.1.0 brought, every path starting at the project's folder, needs 2.1.0 or newer. A manifest asking for 3.0.0 reads as one asking for 2.1.0 does, and names its `platform`. 4.0.0 gives the `zephyr` section a place for everything a Zephyr library writes, by where it goes: the library's switch is `zephyr.symbol`, what it writes into the application's own files, `prj.conf`, `sysbuild.conf` and `CMakeLists.txt`, is under `zephyr.project`, and what it writes into its own folder, its Kconfig, a Kconfig fragment read after `prj.conf` and its `CMakeLists.txt`, under `zephyr.library`. Each list can be given in groups under their titles, and a setting with a note, which the files written carry as comments. The `esp32` and `pio` sections get the same two parts: `esp32.project` for the project's `sdkconfig.defaults` and `CMakeLists.txt`, `esp32.library` for its component, `pio.project` for `platformio.ini` and `pio.library` for `library.json`, and `requires.kconfig` gives way to each platform's own `project.conf`. Arduino and STM32 keep their sections as they are: what they write lands in files that hold no comments, or in different files for each IDE. A manifest asking for 4.0.0 has the new places, and one asking for less keeps the old keys, as the [Zephyr](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md#titles-and-notes-from-400), [ESP-IDF](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md#where-each-line-goes-from-400) and [PlatformIO](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md#where-everything-goes-from-400) pages say. A key given twice in one place is refused from 4.0.0, by every platform: YAML would keep only the last without a word.
 
 Leave `version` out. The installer reads the version from the `@version` tag in the file comment of the first header listed, so it is written in the code and nowhere else:
 
@@ -529,6 +568,192 @@ Leave `version` out. The installer reads the version from the `@version` tag in 
 A step a library runs sees where things are in its environment: `INSTALLER_PROJECT`, the project's folder, `INSTALLER_LIBRARY`, the library's folder in it, `INSTALLER_NAME` and `INSTALLER_VERSION`, the library's, `INSTALLER`, `lib-installer`, and `INSTALLER_PLATFORM`, the platform the run is for, such as `zephyr`, so one script can serve every platform.
 
 There is no installer script to copy into the repository: put the install line from the top of this page in your README, with your library's name in it.
+
+### Examples
+
+**The smallest one.** A library of one header and one source, for one platform, needs no more than this:
+
+```yaml
+name: example
+platform: zephyr
+requires:
+  lib_installer: 4.0.0
+headers:
+  - src/example.h
+sources:
+  - src/example.c
+```
+
+**A driver that needs another library**, with a part the user chooses, a file that becomes the project's, and a step run once the files are in, here for an STM32 project:
+
+```yaml
+name: example
+description: Driver for the X chip
+platform: stm32
+requires:
+  lib_installer: 4.0.0
+  libraries:
+    - osal >= 1.0.0                # installed first, when the project has none that new
+headers:
+  - src/example.h
+  - src/example_config.h           # the user's settings, between USER CODE lines
+sources:
+  - src/example.c
+options:
+  littlefs:                        # lib-installer owner/example --with littlefs
+    description: LittleFS file system on the flash
+    libraries:
+      - littlefs >= 2.11.0
+    sources:
+      - src/example_lfs.c
+once:
+  - from: templates/example_port.c # made once, then the project's
+    to: Core/Src/example_port.c
+extras:
+  - root: tools                    # tools/make_key.py, in the project's folder
+run:
+  - label: make-key                # lib-installer owner/example --run make-key
+    description: Make the product's key, product.key
+    script: tools/make_key.py
+    unless: product.key            # skipped once the key is there
+```
+
+**A Zephyr library that says where each line goes**, the application's files under `project`, its own folder under `library`, each list in groups under their titles, and a setting with a note:
+
+```yaml
+name: example
+platform: zephyr
+requires:
+  lib_installer: 4.0.0
+headers:
+  - src/example.h
+sources:
+  - src/example.c
+zephyr:
+  symbol:                          # CONFIG_EXAMPLE=y, last in its block in prj.conf,
+    EXAMPLE: the driver, and its defaults while it is on  # with its note
+  project:
+    conf:                          # prj.conf, beside the switch, the user's to change
+      What the release build leaves out:
+        - LOG=n: no messages, and nowhere to send them
+        - ASSERT=n
+  library:
+    kconfig:                       # defaults in its Kconfig, while CONFIG_EXAMPLE is on
+      Bluetooth, as a peripheral:
+        - BT
+        - BT_PERIPHERAL
+    conf:                          # its Kconfig fragment, read after prj.conf
+      Bluetooth as fast as it goes:
+        - BT_AUTO_PHY_PERIPHERAL_2M: the 2M PHY as soon as a phone connects
+```
+
+Its block in the application's `prj.conf` then reads:
+
+```
+# >>> lib-installer: example >>>
+# Added by lib-installer, and written again on every install, so set
+# example's settings below this block rather than in it.
+
+# ******************************************************************************
+# What the release build leaves out
+# ******************************************************************************
+# no messages, and nowhere to send them
+CONFIG_LOG=n
+CONFIG_ASSERT=n
+
+# ******************************************************************************
+# example
+# ******************************************************************************
+# the driver, and its defaults while it is on
+CONFIG_EXAMPLE=y
+# <<< lib-installer: example <<<
+```
+
+The [Zephyr page](https://github.com/nimaltd/lib-installer/blob/main/docs/zephyr.md#for-someone-writing-a-library) has every key of its section, and what each writes where.
+
+**An ESP-IDF library that says where each line goes**, the project's files under `project`, its component under `library`, a list in groups under their titles, and a symbol with a note:
+
+```yaml
+name: example
+platform: esp32
+requires:
+  lib_installer: 4.0.0
+headers:
+  - src/example.h
+sources:
+  - src/example.c
+esp32:
+  project:
+    conf:                          # its block in the project's sdkconfig.defaults
+      A faster tick:
+        - FREERTOS_HZ=1000: one tick a millisecond
+    cmake:                         # the project's CMakeLists.txt, by place
+      after-project:
+        - idf_component_get_property(main_lib main COMPONENT_LIB)
+        - target_compile_definitions(${main_lib} PRIVATE EXAMPLE_IN_MAIN)
+  library:
+    requires: [esp_timer]          # REQUIRES of its component
+    cmake:                         # its component's CMakeLists.txt
+      Math:
+        - target_link_libraries(${COMPONENT_LIB} PRIVATE m)
+```
+
+Its block in the project's `sdkconfig.defaults` then reads:
+
+```
+# >>> lib-installer: example >>>
+# Added by lib-installer, and written again on every install, so set
+# example's symbols below this block rather than in it.
+
+# ******************************************************************************
+# A faster tick
+# ******************************************************************************
+# one tick a millisecond
+CONFIG_FREERTOS_HZ=1000
+# <<< lib-installer: example <<<
+```
+
+**A PlatformIO library with a flag for the whole build**, in `platformio.ini` under `project`, and what goes into its `library.json` under `library`:
+
+```yaml
+name: example
+platform: pio
+requires:
+  lib_installer: 4.0.0
+install:
+  defines:
+    - EXAMPLE_FAST
+headers:
+  - src/example.h
+sources:
+  - src/example.c
+pio:
+  project:
+    build_flags:                   # platformio.ini, after its defines, for every file
+      Printing:
+        - -Wl,-u,_printf_float: printf("%f") prints nothing without it
+  library:                         # its library.json, which has no comments
+    frameworks: [arduino]
+    dependencies:
+      - bblanchon/ArduinoJson@^7
+```
+
+Its block in `build_flags` of `platformio.ini`, a title and a note as comments of the file's:
+
+```ini
+[env]
+build_flags =
+    ; >>> lib-installer: example >>>
+    -DEXAMPLE_FAST
+    ; ******************************************************************************
+    ; Printing
+    ; ******************************************************************************
+    ; printf("%f") prints nothing without it
+    -Wl,-u,_printf_float
+    ; <<< lib-installer: example <<<
+```
+
+The [ESP-IDF](https://github.com/nimaltd/lib-installer/blob/main/docs/esp32.md#for-someone-writing-a-library) and [PlatformIO](https://github.com/nimaltd/lib-installer/blob/main/docs/pio.md#for-someone-writing-a-library) pages have every key of their sections.
 
 ---
 

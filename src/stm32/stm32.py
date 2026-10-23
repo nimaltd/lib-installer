@@ -8,6 +8,7 @@ registers the library with.
 """
 
 from . import checks, ide
+from ..core.manifest import count_of
 from ..core.target import Platform
 
 # How a library relates to an operating system.
@@ -25,8 +26,10 @@ class Peripheral:
     """A peripheral the user has to set up in CubeMX before the library works."""
 
     def __init__(self, data):
+        # A word alone, "- spi", as every other platform takes it, or a mapping.
+        data = data if isinstance(data, dict) else {"type": data}
         self.type = str(data.get("type", "")).lower()
-        self.count = int(data.get("count", 1))
+        self.count = count_of(data.get("count", 1), f"requires.peripherals {self.type}")
         self.note = data.get("note", "")
 
     def describe(self):

@@ -246,6 +246,7 @@ requires:
     - type: spi                    # the peripheral, as CubeMX names it
       count: 1                     # how many the library needs
       note: Master mode, 8 bit     # how to set it up, shown when it is missing
+    - i2c                          # or its name alone: one, with no note
   c_standard: c11                  # the C standard the code is written for
 
 install:
@@ -424,7 +425,7 @@ With `mirror`, give a configuration header a `to` that puts it beside the header
 
 One catch worth knowing: `#include "x.h"` searches the including file's own folder before any include path, so a config sitting beside the header that includes it will always win. That is fine when the library's tests use the same config, and it is why the NimaLTD libraries test against a setting such as `EXAMPLE_MAX_TASKS` rather than a fixed number.
 
-The include path follows the layout on its own: `flat` gives the library folder, `mirror` gives wherever the headers landed. Add `install.include_dirs` only when that guess is wrong.
+The include path follows the layout on its own: `flat` gives the library folder, `mirror` gives wherever the headers landed. Add `install.include_dirs` only when that guess is wrong. Each folder is written into the IDE's files as it stands, so it has to be a folder inside the library: one that climbs out with `..`, starts at a drive or at its root, or holds a quote, `<`, `>`, `&` or `;`, is refused when the manifest is read.
 
 ### run
 

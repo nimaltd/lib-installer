@@ -115,7 +115,11 @@ jobs:
 
       # Then the wheel just built, over it. extra names its platform, so no
       # --platform is needed though demo names none. The project moves over:
-      # one record, and every block once, under lib-installer's markers.
+      # one record, and every block once, under lib-installer's markers. conf
+      # goes in after them, as only lib-installer can: it is written for
+      # 4.0.0. Its zephyr.library.conf becomes a Kconfig fragment in its
+      # folder, its groups' titles in it between lines of stars, and a block of
+      # its own above find_package(Zephyr) adds the fragment to EXTRA_CONF_FILE.
       - name: Install it again with lib-installer
         run: |
           python -m pip install --no-index dist/*.whl
@@ -128,9 +132,17 @@ jobs:
           if grep -q "zephyr-installer" CMakeLists.txt prj.conf sysbuild.conf modules/*/zephyr/*; then exit 1; fi
           test "$(grep -c '>>> lib-installer: demo >>>' CMakeLists.txt)" = 1
           test "$(grep -c '>>> lib-installer: demo >>>' prj.conf)" = 1
+          lib-installer "$GITHUB_WORKSPACE/test/zephyr/e2e/conf" < /dev/null
+          test -f modules/conf/zephyr/conf.conf
+          cat CMakeLists.txt prj.conf modules/conf/zephyr/Kconfig modules/conf/zephyr/conf.conf
+          grep -q '# >>> lib-installer: conf/zephyr.conf >>>' CMakeLists.txt
+          grep -qx '# Priorities for every build' modules/conf/zephyr/conf.conf
 
       # 52 is the library's answer with the value prj.conf sets, 50, not its
-      # default of 40, so this also shows the user's setting won.
+      # default of 40, so this also shows the user's setting won. conf's 20 is
+      # from its zephyr.library.conf, read after prj.conf and the 12 it sets,
+      # and the heap of 2048 is the default its zephyr.library.kconfig gives,
+      # over Zephyr's 0. Kconfig reads the stars of its titles as comments.
       - name: Build it and run it
         working-directory: ${{ env.ZP }}
         # Said outright: Zephyr looks for its SDK before it sees the board is
@@ -142,6 +154,7 @@ jobs:
           build/zephyr/zephyr.exe --stop_at=1 | tee run.txt
           grep -q "demo says 52" run.txt
           grep -q "extra says 7, version 3.1.4" run.txt
+          grep -q "conf says 20, heap 2048" run.txt
 
       # Out again, the platform from the record: every block of extra's goes,
       # in CMakeLists.txt, prj.conf and sysbuild.conf, and the files it made
@@ -154,6 +167,15 @@ jobs:
           test -f VERSION
           test -f extra.conf
           test ! -e modules/extra/src/extra.c
+
+      # And conf: its blocks go, the one that adds its Kconfig fragment to
+      # EXTRA_CONF_FILE with them, and so does the fragment.
+      - name: Take conf out
+        working-directory: ${{ env.ZP }}/app
+        run: |
+          lib-installer --uninstall conf < /dev/null
+          if grep -q "lib-installer: conf" CMakeLists.txt prj.conf; then exit 1; fi
+          test ! -e modules/conf/zephyr/conf.conf
 
   esp-idf:
     name: A real ESP-IDF build, run on the linux target
@@ -175,12 +197,14 @@ jobs:
           path: dist/
 
       # The wheel just built, into the test project, the way a user does it:
-      # from the project's folder, with nobody to answer. places names its
-      # platform, so no --platform is needed though the others name none.
-      # extra brings what 2.0.0 adds: files made once and groups of CMake
+      # from the project's folder, with nobody to answer. places and parts
+      # name their platform, so no --platform is needed though the others name
+      # none. extra brings what 2.0.0 adds: files made once and groups of CMake
       # lines. places brings what 2.1.0 adds: every file keeping its path, an
       # extra with a root, a once file named by its path alone, and CMake lines
-      # under their place, with {library} in them.
+      # under their place, with {library} in them. parts brings what 4.0.0
+      # adds: every line under project or library, by where it goes, in groups
+      # under their titles, and a symbol with a note.
       - name: Install the demo libraries
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
@@ -188,20 +212,28 @@ jobs:
           cp -r test/esp32/e2e/app "$RUNNER_TEMP/app"
           cd "$RUNNER_TEMP/app"
           e2e="$GITHUB_WORKSPACE/test/esp32/e2e"
-          lib-installer "$e2e/demo" "$e2e/extra" "$e2e/places" < /dev/null
+          lib-installer "$e2e/demo" "$e2e/extra" "$e2e/places" "$e2e/parts" < /dev/null
           cat CMakeLists.txt main/CMakeLists.txt sdkconfig.defaults version.txt extra.defaults
           cat components/demo/CMakeLists.txt components/demo/Kconfig components/extra/CMakeLists.txt
           cat components/places/CMakeLists.txt components/places/Kconfig
+          cat components/parts/CMakeLists.txt components/parts/Kconfig
           grep -q '"platform": "esp32"' .lib-installer.json
           test -f components/places/src/places.h
           test -f components/places/private/places_private.h
           test -f config/places.cfg
           test -f tools/places.txt
+          grep -q '# >>> lib-installer: parts >>>' sdkconfig.defaults
+          grep -qx '# Its answer' sdkconfig.defaults
+          grep -qx 'CONFIG_PARTS_BASE=20' sdkconfig.defaults
+          grep -q '# >>> lib-installer: parts/after-project >>>' CMakeLists.txt
+          grep -qx '# Checked by parts.c' components/parts/CMakeLists.txt
 
       # 52 is the library's answer with the value sdkconfig.defaults sets, 50,
       # not its default of 40, so this also shows the user's setting won. 7 is
       # extra's with the 5 from extra.defaults, and 3.1.4 is from version.txt.
       # 11 is places' with the 9 from places.defaults, read through {library}.
+      # 22 is parts' with the 20 its project.conf wrote into sdkconfig.defaults,
+      # under a title and with a note, which ESP-IDF reads as comments.
       # The linux target builds for the runner itself, so the program runs here.
       - name: Build it for linux and run it
         working-directory: ${{ runner.temp }}/app
@@ -210,10 +242,12 @@ jobs:
           idf.py --preview set-target linux
           idf.py build
           grep -q "CONFIG_FREERTOS_HZ=1000" sdkconfig
+          grep -q "CONFIG_PARTS_BASE=20" sdkconfig
           timeout 60 ./build/app.elf | tee run.txt
           grep -q "demo says 52" run.txt
           grep -q "extra says 7, version 3.1.4" run.txt
           grep -q "places says 11" run.txt
+          grep -q "parts says 22" run.txt
 
       # The same project for a real chip, which is what users build.
       - name: Build it for esp32
@@ -248,6 +282,18 @@ jobs:
           test ! -e components/places
           test ! -e tools
           test -f config/places.cfg
+
+      # And parts: its blocks go from both files of the project's it wrote
+      # into, titles and notes with them, and its component goes.
+      - name: Take parts out
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          lib-installer --uninstall parts < /dev/null
+          if grep -q "lib-installer: parts" CMakeLists.txt main/CMakeLists.txt sdkconfig.defaults; then exit 1; fi
+          if grep -q "Its answer" sdkconfig.defaults; then exit 1; fi
+          if grep -qw "parts" main/CMakeLists.txt; then exit 1; fi
+          test ! -e components/parts
 
   arduino:
     name: A real Arduino build, moved over from arduino-installer, and into a sketch
@@ -351,7 +397,9 @@ jobs:
       # demo and helper into lib/. helper is for Arduino and PlatformIO, and
       # with nobody to ask which, the first run needs --platform. The project
       # then changes demo's setting and installs again, which has to keep it,
-      # and its record says the platform.
+      # and its record says the platform. Then flags, which brings what 4.0.0
+      # adds: build flags for every file, under titles and with notes, as ;
+      # comments of platformio.ini, and its library.json lists under library.
       - name: Install the demo
         run: |
           python -m pip install --no-index dist/*.whl
@@ -359,16 +407,23 @@ jobs:
           cp test/pio/e2e/app/platformio.ini "$RUNNER_TEMP/before.ini"
           demo="$GITHUB_WORKSPACE/test/pio/e2e/demo"
           helper="$GITHUB_WORKSPACE/test/pio/e2e/helper"
+          flags="$GITHUB_WORKSPACE/test/pio/e2e/flags"
           cd "$RUNNER_TEMP/app"
           if lib-installer "$demo" "$helper" < /dev/null; then exit 1; fi
           lib-installer "$demo" "$helper" --platform pio < /dev/null
           sed -i 's/#define DEMO_PLUS                   2/#define DEMO_PLUS                   12/' lib/demo/src/demo_config.h
           lib-installer "$demo" "$helper" < /dev/null
-          cat platformio.ini lib/demo/library.json lib/demo/src/demo_config.h
+          lib-installer "$flags" < /dev/null
+          cat platformio.ini lib/demo/library.json lib/demo/src/demo_config.h lib/flags/library.json
+          grep -q '; >>> lib-installer: flags >>>' platformio.ini
+          grep -qx '    ; Its level' platformio.ini
+          grep -qx '    -DFLAGS_LEVEL=7' platformio.ini
 
       # demo.h stops the build if DEMO_ON did not reach the project's own code,
-      # so a build of both environments shows the defines got to each of them.
-      # 52 is helper's 40 and the 12 the update had to keep.
+      # and flags.h if FLAGS_LEVEL did not, so a build of both environments
+      # shows the defines and the build flags got to each of them, past the
+      # titles and notes among them. 52 is helper's 40 and the 12 the update had
+      # to keep, and 7 is from flags' build_flags.
       - name: Build and run both environments
         working-directory: ${{ runner.temp }}/app
         run: |
@@ -376,11 +431,11 @@ jobs:
           for env in native plain; do
             got="$(.pio/build/$env/program)"
             echo "$env: $got"
-            test "$got" = "demo says 52"
+            test "$got" = "demo says 52, flags say 7"
           done
 
       # Out again: its files and its library.json go, the setting changed is
-      # saved beside them, and platformio.ini is back to the byte it was.
+      # saved beside them, and its block of platformio.ini goes.
       - name: Take demo out
         working-directory: ${{ runner.temp }}/app
         run: |
@@ -389,4 +444,13 @@ jobs:
           test ! -e lib/demo/library.json
           ls lib/demo/src/demo_config.h.*.bak
           test -e lib/helper/library.json
+          if grep -q "lib-installer: demo" platformio.ini; then exit 1; fi
+
+      # And flags: its files go, and platformio.ini is back to the byte it was.
+      - name: Take flags out
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          lib-installer --uninstall flags < /dev/null
+          test ! -e lib/flags/src/flags.c
+          test ! -e lib/flags/library.json
           cmp platformio.ini "$RUNNER_TEMP/before.ini"

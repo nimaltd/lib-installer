@@ -32,6 +32,7 @@ app/
       module.yml         written by the installer: the library as a Zephyr module
       CMakeLists.txt     its files, built when CONFIG_EXAMPLE is set
       Kconfig            CONFIG_EXAMPLE, the library's settings, and its defaults for others
+      example.conf       its settings for every build, when its installer.yml has zephyr.library.conf
 ```
 
 The block in your `CMakeLists.txt` adds the library's folder to `ZEPHYR_EXTRA_MODULES`. That is how Zephyr is told about a module outside the west workspace, and it has to come before `find_package(Zephyr)`, which is when Zephyr looks:
@@ -55,7 +56,12 @@ The block in `prj.conf` switches the library on, with the symbols it needs and a
 # example's settings below this block rather than in it.
 # Its settings, as they are unless you set them:
 #   CONFIG_EXAMPLE_POLL_CHUNK=32
+
 CONFIG_I2C=y
+
+# ******************************************************************************
+# example
+# ******************************************************************************
 CONFIG_EXAMPLE=y
 # <<< lib-installer: example <<<
 ```
@@ -63,7 +69,6 @@ CONFIG_EXAMPLE=y
 A symbol you already set yourself, on or off, is not set again: in Kconfig the line read last wins, and it would quietly undo your choice. It is still written in the block, commented out, with the line that set it, so the block shows everything the library asked for:
 
 ```
-CONFIG_EXAMPLE=y
 # CONFIG_I2C=y  (left out: prj.conf sets CONFIG_I2C=n)
 ```
 
@@ -90,6 +95,26 @@ list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/example.conf")
 ```
 
 - **Defaults for other symbols**, such as Bluetooth switched on, go into the library's own Kconfig rather than your `prj.conf`: they hold while the library is on, and a line of yours that sets the same symbol wins.
+- **Settings for every build** that a default cannot make, such as a member of a choice, go into a Kconfig fragment of the library's own, `zephyr/example.conf` in its folder, which a block of its own in your `CMakeLists.txt` adds to `EXTRA_CONF_FILE`. Zephyr reads it after `prj.conf`, so a line of it wins over yours, and the install says so:
+
+```cmake
+# >>> lib-installer: example/zephyr.conf >>>
+# example's Kconfig settings, from zephyr.library.conf in its installer.yml,
+# read after prj.conf. Written again on every install.
+list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/modules/example/zephyr/example.conf")
+# <<< lib-installer: example/zephyr.conf <<<
+```
+
+A library that lists its lines in groups has each group's title written above it, between two lines of stars, and a note it gives a line above that line, so each file says why its lines are there:
+
+```
+# ******************************************************************************
+# Bluetooth as fast as it goes
+# ******************************************************************************
+CONFIG_BT_AUTO_PHY_PERIPHERAL_2M=y
+# one notification in each packet
+CONFIG_BT_L2CAP_TX_MTU=247
+```
 
 Every block is written again on every install, so put your own lines outside them. An edit made inside one is noticed on the next install, and the file as it was is in the `.bak`.
 
@@ -171,7 +196,7 @@ The hardware a library uses is yours to give it in the devicetree, which the ins
 
 ### Updating a library
 
-Run the same command again. Every file of the library is replaced, so an update updates, and the module's three files are written again from the new `installer.yml`, so a source file the new version adds is built without you editing anything. A file that did not change is left alone, so the build does not configure again for nothing.
+Run the same command again. Every file of the library is replaced, so an update updates, and the module's files are written again from the new `installer.yml`, so a source file the new version adds is built without you editing anything. A file that did not change is left alone, so the build does not configure again for nothing.
 
 What you wrote between `USER CODE BEGIN` and `USER CODE END` in a library's file is kept. Outside those lines, the next install replaces it, and when that would lose something of yours the file is saved beside it first, as a `.bak`.
 
@@ -183,7 +208,7 @@ The record of what is installed, and where, is `.lib-installer.json` in your app
 lib-installer --uninstall example
 ```
 
-From your application's folder, or with `--project`. Its blocks go from `CMakeLists.txt`, from the Kconfig file that has its block and from `sysbuild.conf`, the module files the installer wrote go from its folder, and then the library's own files. Installed and then uninstalled, `CMakeLists.txt` and `prj.conf` are back to the byte they were. `sysbuild.conf` stays, even when the block was all it held, and so do the [files that became yours](#files-that-become-yours).
+From your application's folder, or with `--project`. Its blocks go from `CMakeLists.txt`, from the Kconfig file that has its block and from `sysbuild.conf`, the module files and the Kconfig fragment the installer wrote go from its folder, and then the library's own files. Installed and then uninstalled, `CMakeLists.txt` and `prj.conf` are back to the byte they were. `sysbuild.conf` stays, even when the block was all it held, and so do the [files that became yours](#files-that-become-yours).
 
 What was yours is saved before it goes, as a `.bak` beside it: any file of the library you wrote in between its `USER CODE` lines or changed by hand. A file you put in the library's folder yourself is left where it is, and the folder with it.
 
@@ -204,7 +229,7 @@ You install only the one you want, and what it needs goes in first, each as a mo
 
 Put an `installer.yml` at the root of the repository. Any library can have one, whoever wrote it, and the one file serves every platform: each reads its own section and leaves the others' alone.
 
-Every key lib-installer reads is below, each with what it does, as a manifest asking for 3.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. For a working one to copy, see [lib-installer-example-zephyr](https://github.com/nimaltd/lib-installer-example-zephyr). What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210).
+Every key lib-installer reads is below, each with what it does, as a manifest asking for 4.0.0 writes it. Only `name` and its `headers` or `sources` are required; leave out what your library does not need. For a working one to copy, see [lib-installer-example-zephyr](https://github.com/nimaltd/lib-installer-example-zephyr). What changed in 2.1.0, and how a manifest from before reads, is under [Paths, from 2.1.0](#paths-from-210).
 
 ```yaml
 name: example                      # the library's name, its folder and its Kconfig symbol
@@ -221,7 +246,7 @@ category: storage                  # sensor, storage, display, communication, wi
 provides: []                       # what it gives other libraries: [rtos] for an RTOS
 
 requires:
-  lib_installer: 3.0.0          # the oldest lib-installer that reads this file
+  lib_installer: 4.0.0             # the oldest lib-installer that reads this file
   libraries:                       # other libraries, installed first when missing
     - osal >= 1.0.0                # no owner means nimaltd; >= the oldest that will do
     - owner/lib                    # anyone else's, as owner/name
@@ -229,9 +254,6 @@ requires:
     - source: owner/other@v2.9.3   # a repository with no installer.yml of its own,
       manifest: manifests/other.yml  # with one this library carries for it
       minimum: 2.9.0               # the oldest version that will do
-  kconfig:                         # symbols it needs, set in the Kconfig file
-    - I2C                          # a symbol alone is set to y
-    - MAIN_STACK_SIZE=2048         # or SYMBOL=value: y, n, a number, 0x.. or "text"
   peripherals:                     # hardware it uses, named to the user
     - type: i2c                    # what it is
       count: 1                     # how many
@@ -281,19 +303,32 @@ run:                               # steps run once the files are in, each asked
     unless: sign_key.pem           # skipped when this file is in the application already
 
 zephyr:                            # read by lib-installer only
-  kconfig: EXAMPLE                 # the library's symbol; the name in capitals when left out
-  defaults:                        # 2.1.0: settings of other symbols, held while the library
-    - BT                           # is on; prj.conf can change any. A symbol alone is y,
-    - BT_L2CAP_TX_MTU=498          # or SYMBOL=value, written as under requires.kconfig
-  cmake:                           # lines of CMake, under the place they go:
-    module:                        # the module's CMakeLists.txt, in if(CONFIG_EXAMPLE)
+  symbol: EXAMPLE                  # the library's switch, CONFIG_EXAMPLE, last in its block
+                                   # in prj.conf under the library's name; the name in
+                                   # capitals when left out. With a note, on a line of its
+                                   # own below symbol: EXAMPLE: its note
+  project:                         # written into the application's own files, each in a
+                                   # block of the library's, written again on every install
+    conf:                          # its Kconfig file, prj.conf, beside the switch; a line
+      - I2C                        # of the user's own wins. A symbol alone is set to y,
+      - MAIN_STACK_SIZE=2048       # or SYMBOL=value: y, n, a number, 0x.. or "text"
+    sysbuild:                      # sysbuild.conf: sysbuild's settings, without SB_CONFIG_
+      - BOOTLOADER_MCUBOOT
+      - BOOT_SIGNATURE_KEY_FILE="${APP_DIR}/sign_key.pem"
+    cmake:                         # its CMakeLists.txt, under the place each line goes:
+      before-zephyr:               # above find_package(Zephyr)
+        - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
+      after-zephyr: []             # at its end
+  library:                         # written into the library's own folder, zephyr/
+    kconfig:                       # its Kconfig: defaults of other symbols, held while the
+      Bluetooth, as a peripheral:  # library is on; prj.conf can change any. A list can be
+        - BT                       # in groups, each under a title, written above it, and
+        - BT_L2CAP_TX_MTU=498: one notification in each packet  # a note above its line
+    conf:                          # its Kconfig fragment, read after prj.conf: settings
+      - BT_AUTO_PHY_PERIPHERAL_2M  # for every build, which win over prj.conf, and set
+      - BT_BUF_ACL_TX_COUNT=10     # what a default cannot, such as a member of a choice
+    cmake:                         # its CMakeLists.txt, inside if(CONFIG_EXAMPLE)
       - zephyr_library_link_libraries(mbedTLS)
-    before-zephyr:                 # the application's, above find_package(Zephyr)
-      - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
-    after-zephyr: []               # the application's, at its end
-  sysbuild:                        # sysbuild settings, a block in sysbuild.conf
-    - BOOTLOADER_MCUBOOT           # a symbol alone is set to y, without SB_CONFIG_
-    - BOOT_SIGNATURE_KEY_FILE="${APP_DIR}/sign_key.pem"  # or SYMBOL=value
   settings:                        # Kconfig symbols the user sets, CONFIG_<name> in the code
     - name: EXAMPLE_POLL_CHUNK     # the symbol, best started with the library's own
       type: int                    # bool, int, hex or string
@@ -312,6 +347,10 @@ Leave `version` out. The installer reads the version from the `@version` tag in 
 
 What 2.0.0 brought needs a manifest asking for 2.0.0 or newer: `once` files in the application's folder, `run`, groups under `zephyr.cmake`, `zephyr.sysbuild`, or a library it needs given with an `@` or a `manifest`. The version also decides where `once` files go. A manifest asking for 2.0.0 or newer puts them in the application's folder, and one asking for less keeps the meaning it was written for, the library's own folder, so a release tagged before 2.0.0 still installs and builds as it did.
 
+4.0.0 gives the `zephyr` section a place for everything the library writes, by where it goes. The library's switch is `zephyr.symbol`, which `zephyr.kconfig` named before. What it writes into the application's own files is under `zephyr.project`: `conf`, its block in the Kconfig file, `prj.conf`, which `requires.kconfig` listed; `sysbuild`, its block in `sysbuild.conf`, which `zephyr.sysbuild` listed; and `cmake`, its lines of the application's `CMakeLists.txt`, under `before-zephyr` and `after-zephyr`. What it writes into its own folder is under `zephyr.library`: `kconfig`, the defaults of its Kconfig, which `zephyr.defaults` listed; `conf`, its Kconfig fragment, new in 4.0.0; and `cmake`, the lines of its own `CMakeLists.txt`, which `zephyr.cmake` had under `module`. Every one of these lists can be given in groups, each under its title, and a setting with a note, see [Titles and notes, from 4.0.0](#titles-and-notes-from-400).
+
+A manifest asking for 4.0.0 or newer has the new places. A key of the `zephyr` section from before is refused there, with the place to use, and so is `requires.kconfig`: from 4.0.0 each platform's settings are in its own section, ESP-IDF's in `esp32.project.conf`, so a manifest for both keeps each in its place. Any other key the section does not hold, such as a misspelt one, is refused with the keys it does. One asking for less keeps the meanings it was written for, and the new keys are refused there: asking for 4.0.0 is what makes an older lib-installer stop and say to update, where it would otherwise install the library without its settings. Any other key is named there in a warning, and the library installs as it did. zephyr-installer, from before 3.0.0, does not read `requires.lib_installer`, and so does not stop on it.
+
 ### Paths, from 2.1.0
 
 A manifest asking for 2.1.0 or newer, as one asking for 3.0.0 does, has one rule for every path that names a place in the application: it starts at the application's folder, the one holding `CMakeLists.txt`. `{library}` at its start names the library's own folder instead, wherever `--dir` put it. A path that names a file of the library, under `headers`, `sources`, `extras` or `once`, or as a `from`, is a path in the repository, as always.
@@ -320,7 +359,7 @@ And every file is copied to the path it has, unchanged, unless a `to` says other
 
 A `to` gives a file another place, where its list puts files. Under `headers`, `sources` and `extras` that is the library's folder, so `- from: src/example.h, to: example.h` lands at `modules/example/example.h`, and the include path follows it. Under `once` it is the application's folder, where every `once` file lands. A `root` puts an extra in the application's folder instead of the library's: `- root: tools` takes the library's `tools/` to the application's `tools/`. Code has no `root`, since it is built in the library's folder, and a `once` file needs none. Wherever a `from` would be the same path as its `to` or `root`, leave it out: `- root: tools` is `- from: tools, root: tools`.
 
-And `zephyr.cmake` gives its lines under the places they go, with no `label`, `where` or `lines`: see [More CMake for a library](#more-cmake-for-a-library).
+And `zephyr.cmake` gives its lines under the places they go, with no `label`, `where` or `lines`, and from 4.0.0 `zephyr.project.cmake` and `zephyr.library.cmake` do: see [More CMake for a library](#more-cmake-for-a-library).
 
 | Key | Starts at |
 |---|---|
@@ -329,7 +368,7 @@ And `zephyr.cmake` gives its lines under the places they go, with no `label`, `w
 | `once.to`, `extras.root` | the application's folder |
 | `run.script`, `run.unless` | the application's folder, or the library's with `{library}/` |
 | `{library}` in `run.args` and `run.command` | the library's folder, as the step names it from the application's |
-| `{library}` in `zephyr.cmake` lines | `${CMAKE_CURRENT_SOURCE_DIR}/<the library's folder>` in the application's `CMakeLists.txt`, `${ZEPHYR_CURRENT_MODULE_DIR}` in the module's |
+| `{library}` in the lines of `zephyr.project.cmake` and `zephyr.library.cmake` | `${CMAKE_CURRENT_SOURCE_DIR}/<the library's folder>` in the application's `CMakeLists.txt`, `${ZEPHYR_CURRENT_MODULE_DIR}` in the module's |
 
 An extra with a `root` lands in the application's folder, as the library's own. A file lands at `root` itself, the files of a folder keep their path below it, and those a wildcard matches keep their names under it; an extra's `to` places them the same way in the library's folder. It is written again on every install, as every extra is, a file of it the new version no longer ships is removed, and an uninstall takes it out. A file already there that the installer did not put there is yours, and is never written over: the install stops and says so.
 
@@ -343,29 +382,31 @@ run:
     script: tools/keygen.py        # the application's tools/keygen.py
     unless: sign_key.pem
 zephyr:
-  cmake:
-    before-zephyr:
-      - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
+  project:
+    cmake:
+      before-zephyr:
+        - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
 ```
 
 A step's script has to be one the install puts in place, an extra with a `root` or a `once` file, or with `{library}`, a file of the library's folder. Anything else is refused when the manifest is read, since it would not be there to run. A manifest asking for less than 2.1.0 keeps the meaning it was written for: its script is found in the library as it was fetched, and `{library}` is left as it is written.
 
 ### Settings of other symbols, from 2.1.0
 
-A library that needs Bluetooth, MCUmgr or anything else of Zephyr switched on, or set to a value of its own, lists those settings under `zephyr.defaults`, written as under `requires.kconfig`: a symbol alone is set to `y`, or `SYMBOL=value`:
+A library that needs Bluetooth, MCUmgr or anything else of Zephyr switched on, or set to a value of its own, lists those settings under `zephyr.library.kconfig`, written as under `zephyr.project.conf`: a symbol alone is set to `y`, or `SYMBOL=value`. A manifest asking for less than 4.0.0 lists them under `zephyr.defaults`, and names the switch with `zephyr.kconfig`, as `zephyr.symbol` does here:
 
 ```yaml
 platform: zephyr
 requires:
-  lib_installer: 3.0.0
+  lib_installer: 4.0.0
 zephyr:
-  kconfig: GCORE
-  defaults:
-    - BT
-    - BT_PERIPHERAL
-    - BT_L2CAP_TX_MTU=498
-    - BT_DEVICE_NAME="gcore"
-    - BT_CTLR_LE_PING=n
+  symbol: GCORE
+  library:
+    kconfig:
+      - BT
+      - BT_PERIPHERAL
+      - BT_L2CAP_TX_MTU=498
+      - BT_DEVICE_NAME="gcore"
+      - BT_CTLR_LE_PING=n
 ```
 
 The installer writes each into the library's Kconfig as a `configdefault`, inside `if GCORE`, and the application's `prj.conf` gets only `CONFIG_GCORE=y`:
@@ -382,35 +423,185 @@ configdefault BT_L2CAP_TX_MTU
 endif # GCORE
 ```
 
-So the settings hold while the library is switched on, and only then. A line of the application's own that sets one of them wins: `CONFIG_BT_L2CAP_TX_MTU=247` in `prj.conf` is the value used, and the install says so. A setting whose dependencies are not met stays off, without a warning. The library's Kconfig is read before Zephyr's subsystems, so its defaults come before theirs, and win over them; only a board's or a SoC's `Kconfig.defconfig`, read earlier still, can come before it.
+So the settings hold while the library is switched on, and only then. A line of the application's own that sets one of them wins: `CONFIG_BT_L2CAP_TX_MTU=247` in `prj.conf` is the value used, and the install says so. A setting whose dependencies are not met stays off, without a warning. The library's Kconfig is read before Zephyr's subsystems, so its defaults come before theirs, and win over them; only a board's or a SoC's `Kconfig.defconfig`, and a symbol Kconfig reads before the library's file, such as several of the nRF Connect SDK's, can come before it. Those go under [`zephyr.library.conf`](#settings-for-every-build-from-400).
 
-A value is `y`, `n`, a number, `0x` and a hex number, or `"text"` with no quote or backslash in it. A symbol given twice, one also under `requires.kconfig`, or the library's own switch, is refused when the manifest is read. A symbol this Zephyr does not define stops the build, as it would in a `prj.conf`. A choice, such as which of several backends is used, cannot be set this way: it goes under `requires.kconfig`, into the application's Kconfig file.
+A value is `y`, `n`, a number, `0x` and a hex number, or `"text"` with no quote or backslash in it. A symbol given twice, one also under `zephyr.project.conf`, or the library's own switch, is refused when the manifest is read. A symbol this Zephyr does not define stops the build, as it would in a `prj.conf`. A choice, such as which of several backends is used, cannot be set this way: it goes under `zephyr.library.conf`, into the library's Kconfig fragment, or under `zephyr.project.conf`, into the application's Kconfig file.
 
-`requires.kconfig` and `zephyr.defaults` differ in where the line goes. `requires.kconfig` writes it into the application's Kconfig file, for the user to see and keep; `zephyr.defaults` keeps it in the library, as a default. A Kconfig fragment given with `EXTRA_CONF_FILE` would be neither: it is read after `prj.conf`, so it would win over the application's own lines, and it would hold with the library switched off.
+`zephyr.project.conf` and `zephyr.library.kconfig` are written alike and differ in where the line goes. `zephyr.project.conf` writes it into the application's Kconfig file, for the user to see and keep; `zephyr.library.kconfig` keeps it in the library, as a default. What neither can set goes under `zephyr.library.conf`, below.
 
-### More CMake for a library
+### Settings for every build, from 4.0.0
 
-A library that needs more than its files and its defines, a library of Zephyr's linked in, an option for its compiler, or a line in the application's own `CMakeLists.txt`, lists the lines under `zephyr.cmake`, under the place each goes:
+Some settings cannot be defaults. A member of a choice, such as `BT_AUTO_PHY_PERIPHERAL_2M`, takes no `configdefault`. And a symbol the nRF Connect SDK defines before Kconfig reads the library's file keeps the default it was given there, which comes first: `BT_CTLR_SDC_MAX_CONN_EVENT_LEN_DEFAULT`, `SOC_FLASH_NRF_RADIO_SYNC_MPSL_NORMAL_PRIORITY_TIMEOUT_US` and `NCS_MCUBOOT_IMGTOOL_SET_ROM_FIXED_ADDRESS` are three. A library lists such settings under `zephyr.library.conf`, written as under `zephyr.library.kconfig`: a symbol alone is set to `y`, or `SYMBOL=value`:
+
+```yaml
+platform: zephyr
+requires:
+  lib_installer: 4.0.0
+zephyr:
+  symbol: GCORE
+  library:
+    conf:
+      - BT_AUTO_PHY_PERIPHERAL_2M
+      - BT_CTLR_SDC_MAX_CONN_EVENT_LEN_DEFAULT=4000000
+      - SOC_FLASH_NRF_RADIO_SYNC_MPSL_NORMAL_PRIORITY_TIMEOUT_US=0
+      - NCS_MCUBOOT_IMGTOOL_SET_ROM_FIXED_ADDRESS=n
+```
+
+The installer writes them into a Kconfig fragment of the library's own, `zephyr/gcore.conf` in its folder, a line each:
+
+```
+# Generated by lib-installer for gcore 1.0.0. Written again on
+# every install and update, so a change made here does not last.
+#
+# gcore's settings, from zephyr.library.conf in its installer.yml. The
+# application's CMakeLists.txt adds this file to EXTRA_CONF_FILE, so Zephyr
+# reads it after prj.conf, and a line here wins over one there.
+
+CONFIG_BT_AUTO_PHY_PERIPHERAL_2M=y
+CONFIG_BT_CTLR_SDC_MAX_CONN_EVENT_LEN_DEFAULT=4000000
+CONFIG_SOC_FLASH_NRF_RADIO_SYNC_MPSL_NORMAL_PRIORITY_TIMEOUT_US=0
+CONFIG_NCS_MCUBOOT_IMGTOOL_SET_ROM_FIXED_ADDRESS=n
+```
+
+And it adds the file to the build with a block of its own in the application's `CMakeLists.txt`, above `find_package(Zephyr)`, below the block that adds the library's folder. The file is named as `{library}` names the library's folder in a line of `zephyr.project.cmake`, wherever `--dir` put it:
+
+```cmake
+# >>> lib-installer: gcore/zephyr.conf >>>
+# gcore's Kconfig settings, from zephyr.library.conf in its installer.yml,
+# read after prj.conf. Written again on every install.
+list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/modules/gcore/zephyr/gcore.conf")
+# <<< lib-installer: gcore/zephyr.conf <<<
+```
+
+Zephyr merges the application's Kconfig files first, `prj.conf` and a board's own `.conf`, then what `EXTRA_CONF_FILE` lists, and of that what the application's `CMakeLists.txt` adds comes before a file given with `-DEXTRA_CONF_FILE`, on the command line or in `CMakePresets.json`, with sysbuild or without. So the fragment is read after `prj.conf` and before a debug build's `prj_debug.conf`, as the build's `Merged configuration` lines show:
+
+```bash
+west build -b nrf54l15dk/nrf54l15/cpuapp -d build-debug -- -DEXTRA_CONF_FILE=prj_debug.conf
+```
+
+```
+Merged configuration '.../prj.conf'
+Merged configuration '.../boards/nrf54l15dk_nrf54l15_cpuapp.conf'
+Merged configuration '.../modules/gcore/zephyr/gcore.conf'
+Merged configuration '.../prj_debug.conf'
+```
+
+Which means:
+
+- Each line is an assignment. It holds over every default, those of the library's Kconfig and the nRF Connect SDK's alike, and sets a member of a choice.
+- A line of the application's Kconfig files that sets the same symbol loses to it. Nothing in the build says so, so the install names each one before it writes anything:
+
+```
+Requirements
+  check   prj.conf sets CONFIG_BT_CTLR_SDC_MAX_CONN_EVENT_LEN_DEFAULT=7500, and gcore's zephyr.library.conf sets 4000000
+          zephyr/gcore.conf is read after prj.conf, so its line is the one used. A file given with -DEXTRA_CONF_FILE is read after it.
+```
+
+- A file given with `-DEXTRA_CONF_FILE`, such as `prj_debug.conf` above, is read after it, and can still change any of its lines for that build.
+- The lines hold for as long as the library is installed, not only while it is switched on: the block stays in `CMakeLists.txt` with `CONFIG_GCORE` off in `prj.conf`.
+
+The fragment and its block are written again on every install. An update whose `installer.yml` no longer has `zephyr.library.conf` takes both out, and so does an uninstall, which gives `CMakeLists.txt` back as it was. A library with its own `zephyr/module.yml` gets the fragment too.
+
+A value is `y`, `n`, a number, `0x` and a hex number, or `"text"` with no quote or backslash in it. A symbol given twice, the library's own switch, a symbol also under `zephyr.project.conf` or `zephyr.library.kconfig`, which `zephyr.library.conf` would quietly undo, and a file of the library's own at the fragment's place are refused when the manifest is read. A symbol this Zephyr does not define stops the build, as it would in a `prj.conf`.
+
+| Key | Where the line goes | A line of the application's own that sets the symbol |
+|---|---|---|
+| `zephyr.project.conf` | the application's Kconfig file, in the library's block | wins: the block has the library's line commented out |
+| `zephyr.library.kconfig` | the library's `zephyr/Kconfig`, a `configdefault` while it is switched on | wins, and so does a default Kconfig reads before the library's |
+| `zephyr.library.conf` | the library's `zephyr/<name>.conf`, read after `prj.conf` | loses, unless it is in a file given with `-DEXTRA_CONF_FILE` |
+
+So a setting the application is to keep and change goes under `zephyr.project.conf` or `zephyr.library.kconfig`, and one the library needs in every build, whatever `prj.conf` says, under `zephyr.library.conf`.
+
+### Titles and notes, from 4.0.0
+
+Every list under `zephyr.project` and `zephyr.library` can be given in groups, each under its title, and a setting with a note. The installer writes both into the file the list goes into, as comments, so whoever reads the application's `prj.conf`, or the library's fragment, sees why each line is there:
 
 ```yaml
 zephyr:
-  cmake:
-    module:
-      - zephyr_library_link_libraries(mbedTLS)
-      - zephyr_library_compile_options(-O2)
-    before-zephyr:
-      - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
-    after-zephyr:
-      - 'message(STATUS "example: built for ${BOARD}")'
+  symbol:
+    GCORE: builds gcore, and its defaults hold while it is on
+  project:
+    conf:
+      The smallest code, with nothing to print:
+        - SIZE_OPTIMIZATIONS
+        - LOG=n: no messages, and nowhere to send them
+        - PRINTK=n
+  library:
+    conf:
+      Bluetooth as fast as it goes:
+        - BT_AUTO_PHY_PERIPHERAL_2M
+        - BT_L2CAP_TX_MTU=247: one notification in each packet
 ```
 
-| Place | Written into | For |
-|---|---|---|
-| `module` | the module's `zephyr/CMakeLists.txt`, inside `if(CONFIG_EXAMPLE)`, after the library's files | `zephyr_library_...` calls on the library itself, counted only while it is switched on |
-| `before-zephyr` | the application's `CMakeLists.txt`, above `find_package(Zephyr)`, below the library's `ZEPHYR_EXTRA_MODULES` block | what Zephyr reads as it starts: `EXTRA_CONF_FILE`, `EXTRA_DTC_OVERLAY_FILE`, `SNIPPET`. No `CONFIG_` value exists yet |
-| `after-zephyr` | the application's `CMakeLists.txt`, at its end | what needs the application's own targets, such as `app` |
+The block in `prj.conf`:
 
-The lines of each place are written as one block, between two lines that name the library and the place, `# >>> lib-installer: example/before-zephyr >>>` and its pair, in the manifest's order:
+```
+# >>> lib-installer: gcore >>>
+# Added by lib-installer, and written again on every install, so set
+# gcore's settings below this block rather than in it.
+
+# ******************************************************************************
+# The smallest code, with nothing to print
+# ******************************************************************************
+CONFIG_SIZE_OPTIMIZATIONS=y
+# no messages, and nowhere to send them
+CONFIG_LOG=n
+CONFIG_PRINTK=n
+
+# ******************************************************************************
+# gcore
+# ******************************************************************************
+# builds gcore, and its defaults hold while it is on
+CONFIG_GCORE=y
+# <<< lib-installer: gcore <<<
+```
+
+And `zephyr/gcore.conf`, below its own lines of comment:
+
+```
+# ******************************************************************************
+# Bluetooth as fast as it goes
+# ******************************************************************************
+CONFIG_BT_AUTO_PHY_PERIPHERAL_2M=y
+# one notification in each packet
+CONFIG_BT_L2CAP_TX_MTU=247
+```
+
+- A list is either plain, as it always was, or a mapping of titles to their lists. A plain list is written as it always was, with no title.
+- A title is one line, written between two lines of stars, 80 columns wide, above its group, and a group after the first starts after a blank line. The same holds in `sysbuild.conf`, in the library's `Kconfig`, above the `configdefault`s of its group, and in the lines of CMake, in the application's file and the module's.
+- A note follows its setting after a colon, `LOG=n: no messages`, and is written as a comment of its own above the setting's line, since Kconfig takes no comment at the end of one. A setting the application sets itself keeps its note, above the line left out.
+- The library's switch, `CONFIG_GCORE=y`, is always last in the block, a group of its own under the library's name, between two lines of stars. Its note comes from `zephyr.symbol`, given as a setting's is, after a colon, on a line of its own below `symbol:`, as above, since YAML takes no second `: ` on the line of `symbol:` itself. A manifest asking for less than 4.0.0 has the switch last with no title, as it always had. The switch is never listed among the settings, under `zephyr.project` or `zephyr.library`: such a manifest is refused.
+- A line of CMake takes a title but no note: a line holding `: ` is CMake's own, and goes in quotes, so that YAML reads it as a line.
+- A title or a note holding `: ` goes in quotes too, as any YAML text does.
+- A title or a note is one line, and none may hold what the installer marks its blocks with, `>>>`, `<<<` or `USER CODE`, nor read as a setting, as `CONFIG_X is not set` does. Such a manifest is refused when it is read.
+- Two groups with one title are refused, as is any key given twice: YAML would keep only the last, and drop the other's lines without a word.
+- A comment of YAML's own, after a `#`, stays in `installer.yml`, for whoever reads that file.
+
+### More CMake for a library
+
+A library that needs more than its files and its defines, a library of Zephyr's linked in, an option for its compiler, or a line in the application's own `CMakeLists.txt`, lists the lines by the file they go into: those of its own `CMakeLists.txt` under `zephyr.library.cmake`, and those of the application's under `zephyr.project.cmake`, under the place each goes:
+
+```yaml
+zephyr:
+  project:
+    cmake:
+      before-zephyr:
+        - list(APPEND EXTRA_DTC_OVERLAY_FILE "{library}/dts/example.overlay")
+      after-zephyr:
+        - 'message(STATUS "example: built for ${BOARD}")'
+  library:
+    cmake:
+      - zephyr_library_link_libraries(mbedTLS)
+      - zephyr_library_compile_options(-O2)
+```
+
+| Key | Written into | For |
+|---|---|---|
+| `zephyr.library.cmake` | the module's `zephyr/CMakeLists.txt`, inside `if(CONFIG_EXAMPLE)`, after the library's files | `zephyr_library_...` calls on the library itself, counted only while it is switched on |
+| `zephyr.project.cmake.before-zephyr` | the application's `CMakeLists.txt`, above `find_package(Zephyr)`, below the library's `ZEPHYR_EXTRA_MODULES` block | what Zephyr reads as it starts: `EXTRA_CONF_FILE`, `EXTRA_DTC_OVERLAY_FILE`, `SNIPPET`. No `CONFIG_` value exists yet |
+| `zephyr.project.cmake.after-zephyr` | the application's `CMakeLists.txt`, at its end | what needs the application's own targets, such as `app` |
+
+The lines of each place are written as one block, between two lines that name the library and the place, `module`, `before-zephyr` or `after-zephyr`, `# >>> lib-installer: example/before-zephyr >>>` and its pair, in the manifest's order. A list given in groups has each group's title among its lines, between two lines of stars, see [Titles and notes, from 4.0.0](#titles-and-notes-from-400):
 
 ```cmake
 # >>> lib-installer: example/before-zephyr >>>
@@ -421,11 +612,11 @@ list(APPEND EXTRA_DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/modules/example/
 
 Every install writes them again: a place whose lines changed is updated, and one the manifest no longer has is taken out. A line keeps the spaces it starts with, so the body of an `if()` can be indented. `{library}` in a line names the library's folder, as `${CMAKE_CURRENT_SOURCE_DIR}/modules/example` in the application's file and `${ZEPHYR_CURRENT_MODULE_DIR}` in the module's, wherever `--dir` put it; anything else in a line is CMake's own, written as it stands. A line holding a colon, as `message()` often does, goes in quotes, or YAML reads it as a mapping.
 
-An option brings lines of its own under `options.<name>.zephyr.cmake`, the same way, written while it is chosen and taken out by the update that turns it off. Its blocks are named after it and the place, `example/littlefs-module`, so they never meet the library's.
+An option brings lines of its own under `options.<name>.zephyr.project.cmake` and `options.<name>.zephyr.library.cmake`, the same way, written while it is chosen and taken out by the update that turns it off. Its blocks are named after it and the place, `example/littlefs-module`, so they never meet the library's.
 
 `zephyr_library_...` commands act on the library's own files only. A library of headers alone has no library of its own, so it uses the `zephyr_...` ones, which act on the whole build. The lines run when the user configures the build, the same as a module the library ships itself would, so they are the library's to answer for.
 
-The forms from before 2.1.0 still install. A list of groups, each with a `label`, a `where`, `module` when left out, and its `lines`, writes each group as a block named after its label, `example/<label>`; a manifest moving to places has its old blocks taken out on the next install, and the new ones written. The form from before 2.0.0, a plain list of lines, is one group in `module`, written as it always was.
+A manifest asking for less than 4.0.0 gives the lines under `zephyr.cmake`, by the same places, `module` among them, and its blocks keep their names when it moves to 4.0.0. The forms from before 2.1.0 still install too. A list of groups, each with a `label`, a `where`, `module` when left out, and its `lines`, writes each group as a block named after its label, `example/<label>`; a manifest moving to places has its old blocks taken out on the next install, and the new ones written. The form from before 2.0.0, a plain list of lines, is one group in `module`, written as it always was.
 
 The user has a place in the module's file too. Its last lines are a `USER CODE` section, empty to start with, and every install keeps what is written in it, the way a configuration header keeps settings:
 
@@ -440,14 +631,15 @@ On an uninstall, a section with something in it is saved as a `.bak` before the 
 
 ### Sysbuild settings
 
-MCUboot is an image of its own, built by sysbuild, and sysbuild does not see a module added through `ZEPHYR_EXTRA_MODULES`. So a library that needs it switched on lists the settings under `zephyr.sysbuild`, and they go into a block in the application's `sysbuild.conf`:
+MCUboot is an image of its own, built by sysbuild, and sysbuild does not see a module added through `ZEPHYR_EXTRA_MODULES`. So a library that needs it switched on lists the settings under `zephyr.project.sysbuild`, `zephyr.sysbuild` before 4.0.0, and they go into a block in the application's `sysbuild.conf`:
 
 ```yaml
 zephyr:
-  sysbuild:
-    - BOOTLOADER_MCUBOOT
-    - BOOT_SIGNATURE_TYPE_ECDSA_P256
-    - BOOT_SIGNATURE_KEY_FILE="${APP_DIR}/sign_key.pem"
+  project:
+    sysbuild:
+      - BOOTLOADER_MCUBOOT
+      - BOOT_SIGNATURE_TYPE_ECDSA_P256
+      - BOOT_SIGNATURE_KEY_FILE="${APP_DIR}/sign_key.pem"
 ```
 
 ```
@@ -460,7 +652,7 @@ SB_CONFIG_BOOT_SIGNATURE_KEY_FILE="${APP_DIR}/sign_key.pem"
 # <<< lib-installer: example <<<
 ```
 
-Each is read like `requires.kconfig`, written without `SB_CONFIG_`, which the installer adds. A value is written as given: sysbuild expands `${APP_DIR}` itself. The block follows the rules of the one in `prj.conf`: a symbol the user sets outside it is left commented out in it, an uninstall takes it out, and `sysbuild.conf` is made when the application has none.
+Each is read like a line of `zephyr.project.conf`, written without `SB_CONFIG_`, which the installer adds, and can be in groups, each under its title, with a note. A value is written as given: sysbuild expands `${APP_DIR}` itself. The block follows the rules of the one in `prj.conf`: a symbol the user sets outside it is left commented out in it, an uninstall takes it out, and `sysbuild.conf` is made when the application has none.
 
 ### Files of the application's own
 
@@ -544,4 +736,4 @@ Each setting is checked at install, since all of it is written into a Kconfig fi
 
 ### A library with its own module
 
-A library that ships a `zephyr/module.yml` of its own, listed under `extras`, `headers` or `sources` so it is installed, knows its build better than the installer does. Its module is used as it is: nothing is written into its `zephyr` folder, and only the two blocks in the application are added. `zephyr.kconfig` then names the symbol its Kconfig defines, for the block in `prj.conf` to set.
+A library that ships a `zephyr/module.yml` of its own, listed under `extras`, `headers` or `sources` so it is installed, knows its build better than the installer does. Its module is used as it is: nothing is written into its `zephyr` folder but the Kconfig fragment of its `zephyr.library.conf`, when it has one, and only the blocks in the application are added. `zephyr.symbol`, or `zephyr.kconfig` in a manifest asking for less than 4.0.0, then names the symbol its Kconfig defines, for the block in `prj.conf` to set.
