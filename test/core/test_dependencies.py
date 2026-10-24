@@ -193,6 +193,31 @@ def test_a_copy_given_on_the_command_line_is_installed_even_when_one_will_do(
     assert known["osal"]["folder"] == "Libs/osal"
 
 
+def test_a_copy_given_over_one_that_will_do_is_not_called_an_update(
+    library, project, tmp_path, github, no_question, capsys
+):
+    """osal 1.2.0 is in the project and ee24 wants 1.1.0: nothing is too old."""
+    root = project(cmake=True)
+    have = _lib(library, tmp_path / "v1", "osal", version="1.2.0")
+
+    assert cli.main([str(have), "--project", str(root), "--dir", "Libs/osal"]) == 0
+    capsys.readouterr()
+
+    no_question({"osal"})
+    ee24 = _lib(library, tmp_path / "disk", "ee24", needs=["osal >= 1.1.0"])
+    again = _lib(library, tmp_path / "v2", "osal", version="1.2.0")
+
+    code = cli.main([str(ee24), str(again), "--project", str(root), "-y"])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "the 1.2.0 in this project will do" in out
+    assert "osal 1.2.0 was given on the command line" in out
+    assert "newer than the" not in out, "a copy given over one that will do was called an update"
+    assert "Updating osal" not in out
+    assert installer.installed_libraries(root)["osal"]["folder"] == "Libs/osal"
+
+
 def test_what_is_too_old_is_updated_where_it_is(
     library, project, tmp_path, github, no_question, capsys
 ):

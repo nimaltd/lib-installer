@@ -940,11 +940,22 @@ def _install_step(step, project_root, folder, only_ide):
     library = source.library
     root = source.project_root or project_root
 
-    if step.needed_by and step.installed:
+    have = step.installed.get("version") if step.installed else None
+
+    # What is in the project will do, so the plan only has this step because a
+    # copy was given on the command line. It is not an update anybody needs.
+    if step.needed_by and step.installed and step.dependency.satisfied_by(have):
+        print()
+        print(console.note(
+            f"{step.needed_by} needs {step.dependency}, and the {have} in this project will do. "
+            f"{library.name} {library.version} was given on the command line, so it is "
+            "installed over that one first."
+        ))
+    elif step.needed_by and step.installed:
         print()
         print(console.note(
             f"{step.needed_by} needs {step.dependency}, newer than the "
-            f"{step.installed.get('version')} in this project. Updating {library.name} first."
+            f"{have} in this project. Updating {library.name} first."
         ))
     elif step.needed_by:
         print()
