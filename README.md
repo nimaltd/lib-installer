@@ -15,7 +15,7 @@ libnima owner/example
 
 **Your libraries install as they are.** libNIMA reads an `installer.yml` written for lib-installer 3.x or 4.x through a built-in converter, and `libnima --convert` writes it out as a `libnima.yml`. A step written as a Python script needs Python on that machine.
 
-4.0.1 was the last release of lib-installer, and its code stays in this repository's history.
+This last release, 5.0.0, only says this, and installs nothing. 4.0.1 was the last that installed, and its code stays in this repository's history.
 
 ---
 

@@ -1,37 +1,47 @@
 """
-The lib-installer command: the core's command line, with every platform.
+The lib-installer command, now only a pointer to libNIMA.
 
-The core chooses the platform of each run from the library's installer.yml, or
-from --platform, and every platform's own options, such as --ide and --conf,
-are on the one command line.
+--version still answers, so a script that checks it keeps working. Anything
+else says where the installer went and what to type there, and installs
+nothing, with exit code 1, so a script notices.
 """
 
+import shlex
 import sys
 
 from . import __version__
-from .arduino.arduino import Arduino
-from .core import cli
-from .esp32.esp32 import Esp32
-from .pio.pio import PlatformIO
-from .stm32.stm32 import Stm32
-from .zephyr.zephyr import Zephyr
 
-# Each platform by the name platform: in installer.yml and --platform give it,
-# in the order the help lists them.
-PLATFORMS = {
-    "stm32": lambda: Stm32(__version__),
-    "zephyr": lambda: Zephyr(__version__),
-    "esp32": lambda: Esp32(__version__),
-    "arduino": lambda: Arduino(__version__),
-    "pio": lambda: PlatformIO(__version__),
-}
+NAME = "lib-installer"
 
-__all__ = ["PLATFORMS", "main"]
+__all__ = ["main"]
 
 
-def main(argv=None, library_root=None):
-    """Run the command. Returns a process exit code."""
-    return cli.main(argv=argv, library_root=library_root, platforms=PLATFORMS)
+def main(argv=None):
+    """Say where lib-installer went. Returns a process exit code."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+
+    if argv[:1] in (["--version"], ["-V"]):
+        print(f"{NAME} {__version__}")
+        return 0
+
+    same = "libnima " + (shlex.join(argv) if argv else "owner/example")
+    print(
+        f"{NAME} is now libNIMA: the same installer, rewritten, with a window\n"
+        "and the libnima command, and no Python.\n"
+        "Nothing was installed.\n"
+        "\n"
+        "Download libNIMA from https://github.com/nimaltd/libNIMA/releases/latest,\n"
+        "then:\n"
+        "\n"
+        f"    pip uninstall {NAME}\n"
+        f"    {same}\n"
+        "\n"
+        f"A project {NAME} installed into moves over by itself on the first run.\n"
+        "https://github.com/nimaltd/libNIMA",
+        file=sys.stderr,
+    )
+
+    return 1
 
 
 if __name__ == "__main__":

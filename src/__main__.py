@@ -1,4 +1,4 @@
-"""Lets the package be run directly: python -m lib_installer owner/example"""
+"""Lets the package be run directly: python -m lib_installer nimaltd/example"""
 
 import sys
 
